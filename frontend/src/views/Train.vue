@@ -42,9 +42,6 @@
             <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
               <div class="bubble">{{ m.content }}</div>
             </div>
-            <div v-if="sending" class="msg customer">
-              <div class="bubble muted">AI 思考中...</div>
-            </div>
           </div>
 
           <!-- 输入区 -->
@@ -109,7 +106,7 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   listCategoriesAgent, startSession, listMessages,
-  sendMessage, finishSession, getScore,
+  streamMessage, finishSession, getScore,
 } from '../api.js'
 
 const router = useRouter()
@@ -173,25 +170,47 @@ async function onSend() {
   const text = inputText.value.trim()
   if (!text || sending.value) return
   sending.value = true
-  // 先把客服消息显示出来
-  messages.value.push({ id: 'tmp-' + Date.now(), role: 'agent', content: text })
+
+  // 先显示客服消息
+  messages.value.push({ id: 'agent-' + Date.now(), role: 'agent', content: text })
   inputText.value = ''
+
+  // 准备空的客户消息气泡（流式逐字填充）
+  const customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
+  messages.value.push(customerMsg)
   await scrollBottom()
+
+  let streamResult = null
   try {
-    const { data } = await sendMessage(session.value.id, text)
-    // 替换临时消息为真实（带id）
-    messages.value[messages.value.length - 1] = data.agent_message
-    if (data.customer_message) {
-      messages.value.push(data.customer_message)
-    }
-    await scrollBottom()
-    if (data.is_finished) {
+    streamResult = await streamMessage(
+      session.value.id,
+      text,
+      // onToken: 每收到一个字符追加到气泡
+      (token) => {
+        customerMsg.content += token
+        scrollBottom()
+      },
+      // onDone: 流结束
+      (data) => {
+        streamResult = data
+      }
+    )
+
+    // 流式结束后刷新消息列表（获取真实 ID）
+    const { data: msgs } = await listMessages(session.value.id)
+    messages.value = msgs
+
+    if (streamResult?.is_finished) {
+      session.value.status = 'completed'
       await autoFinish()
     }
   } catch (e) {
-    alert(e.response?.data?.detail || '发送失败')
+    alert(typeof e === 'string' ? e : e.message || '发送失败')
+    // 失败则移除空的气泡
+    messages.value = messages.value.filter(m => m !== customerMsg)
   } finally {
     sending.value = false
+    await scrollBottom()
   }
 }
 

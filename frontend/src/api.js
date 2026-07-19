@@ -72,6 +72,53 @@ export const listMessages = (sessionId) =>
 export const sendMessage = (sessionId, content) =>
   http.post(`/agent/sessions/${sessionId}/messages`, { content })
 
+/** v0.3 流式消息：SSE 逐字接收
+ * onToken(token): 每收到一个字符调用
+ * onDone(data): 流结束时调用，data={done:true, message_id, turn, is_finished}
+ */
+export const streamMessage = (sessionId, content, onToken, onDone) => {
+  const token = localStorage.getItem('token')
+  return fetch(`/api/agent/sessions/${sessionId}/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ content }),
+  }).then(async (res) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '连接失败' }))
+      throw new Error(err.detail || '请求失败')
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.done) {
+              onDone(data)
+              return data
+            } else if (typeof onToken === 'function') {
+              onToken(data.token || '')
+            }
+          } catch (_) { /* 忽略解析异常的行 */ }
+        }
+      }
+    }
+  });
+};
+
 export const finishSession = (sessionId) =>
   http.post(`/agent/sessions/${sessionId}/finish`)
 

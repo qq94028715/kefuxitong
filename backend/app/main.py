@@ -1,14 +1,11 @@
-"""kefuxitong 客服训练系统 - FastAPI 入口（v0.2）。
+"""kefuxitong 客服训练系统 - FastAPI 入口（v0.3）。
 
-v0.2 核心升级：两层知识架构 + 真实 LLM。
-- 管理员上传材料 → AI 提取结构化知识（knowledge 表）
-- 客服训练时，AI 客户基于知识 JSON 模拟对话（不再用固定 Q&A 抽题）
-- 对话结束，AI 主管结构化评分（score 表）
-
-路由分组：
-- /api/admin/*  管理员（账号、分类、材料、知识库）
-- /api/agent/*   客服（登录、训练对话、评分）
+v0.3 核心升级：Intent 三层路由 + 流式输出。
+- chat → intent.classify → Quick Reply / Cache / DeepSeek → stream 输出
+- 多数轮次毫秒级响应（无需调 LLM），DeepSeek 兜底复杂场景
+- SSE 流式传输，前端逐字显示
 """
+import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -16,6 +13,7 @@ from datetime import datetime
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from starlette.responses import StreamingResponse
 
 from .ai.evaluator import evaluate_session
 from .ai.knowledge import (
@@ -23,6 +21,7 @@ from .ai.knowledge import (
     get_knowledge_for_training,
     get_latest_knowledge,
 )
+from .ai.router import generate_reply_stream
 from .ai.simulator import END_MARKER, generate_customer_reply
 from .auth import (
     create_access_token,
@@ -502,6 +501,100 @@ def send_message(
             if customer_msg else None
         ),
         is_finished=is_finished,
+    )
+
+
+# ---------- SSE 流式消息端点 (v0.3) ----------
+
+@app.post("/api/agent/sessions/{session_id}/stream")
+def stream_message(
+    session_id: int,
+    req: SendMessageRequest,
+    user: User = Depends(require_agent),
+    db: Session = Depends(get_db),
+):
+    """流式发送消息 + 接收 AI 客户回复（SSE）。
+
+    客服发消息 → intent 意图分类 → Quick Reply/Cache/DeepSeek 三层路由
+    → 逐字流式输出。前端用 EventSource / fetch+ReadableStream 接收。
+
+    流程：
+    1. 存客服消息 → commit
+    2. 路由生成客户回复（流式）
+    3. 存客户消息到数据库
+    4. 流式结束后前端 GET messages 刷新列表
+    """
+    s = _get_user_session(db, session_id, user.id)
+    if s.status == "completed":
+        raise HTTPException(status_code=400, detail="训练已结束")
+
+    cat = db.query(Category).filter(Category.id == s.category_id).first()
+    knowledge = get_knowledge_for_training(db, s.category_id)
+    knowledge_id = s.category_id  # 按 category 维度缓存
+
+    # 存客服消息
+    agent_msg = ChatMessage(session_id=s.id, role="agent", content=req.content)
+    db.add(agent_msg)
+    db.flush()
+
+    history = list(s.messages)  # 含刚加的 agent_msg
+    turn_count = sum(1 for m in history if m.role == "agent")
+
+    # 提交客服消息，后续 generator 用独立 session
+    db.commit()
+    db.refresh(agent_msg)
+
+    def _stream():
+        full_reply = ""
+        is_finished = False
+
+        # 流式生成客户回复
+        for chunk in generate_reply_stream(
+            knowledge=knowledge,
+            history=history,
+            category_name=cat.name if cat else "",
+            turn_count=turn_count,
+            max_turns=settings.max_dialogue_turns,
+            knowledge_id=knowledge_id,
+        ):
+            if chunk == "[DONE]":
+                break
+            full_reply += chunk
+            yield f"data: {json.dumps({'token': chunk, 'done': False}, ensure_ascii=False)}\n\n"
+
+        # 存储客户消息
+        db2 = SessionLocal()
+        try:
+            clean = full_reply.strip()
+            # 检测 END_MARKER（路由可能返回后跟了结束标记）
+            if END_MARKER in clean:
+                clean = _clean_reply(clean)
+                is_finished = True
+
+            if clean:
+                cm = ChatMessage(session_id=session_id, role="customer", content=clean)
+                db2.add(cm)
+                db2.commit()
+                db2.refresh(cm)
+                msg_id = cm.id
+            else:
+                msg_id = None
+
+            # 超过最大轮数自动结束
+            if turn_count >= settings.max_dialogue_turns:
+                is_finished = True
+
+            yield f"data: {json.dumps({'done': True, 'message_id': msg_id, 'turn': turn_count, 'is_finished': is_finished}, ensure_ascii=False)}\n\n"
+        finally:
+            db2.close()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

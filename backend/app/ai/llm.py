@@ -10,7 +10,7 @@
 """
 import json
 import logging
-from typing import Optional
+from typing import Generator, Optional
 
 from openai import OpenAI
 
@@ -68,6 +68,41 @@ def chat(
     except Exception as e:
         logger.error("LLM 调用失败: %s", e)
         return None
+
+
+def stream_chat(
+    messages: list[dict],
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+) -> Generator[str, None, None]:
+    """流式调用 LLM 对话接口，逐 token 产出。
+
+    未配置 LLM 时 yield None 一次后退回。
+    """
+    client = get_client()
+    if client is None:
+        yield None
+        return
+    try:
+        stream = client.chat.completions.create(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=(
+                temperature if temperature is not None else settings.llm_temperature
+            ),
+            max_tokens=(
+                max_tokens if max_tokens is not None else settings.llm_max_tokens
+            ),
+            stream=True,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
+    except Exception as e:
+        logger.error("LLM 流式调用失败: %s", e)
+        # yield None 让上层知道失败了
+        yield None
 
 
 def chat_json(
