@@ -118,7 +118,10 @@
                   <td><span class="tag">{{ m.file_type }}</span></td>
                   <td class="muted">{{ humanSize(m.file_size) }}</td>
                   <td>{{ fmt(m.created_at) }}</td>
-                  <td><button class="btn danger sm" @click="onDeleteMaterial(m.id)">删除</button></td>
+                  <td>
+                    <button class="btn sm" style="margin-right:6px" @click="onEditMaterial(m)">编辑</button>
+                    <button class="btn danger sm" @click="onDeleteMaterial(m.id)">删除</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -176,6 +179,35 @@
               </div>
             </div>
             <div v-else class="empty" style="margin-top:16px">该分类尚未提取知识库，点击上方「重新提取知识库」</div>
+
+            <!-- 编辑材料弹窗 -->
+            <div v-if="editingMaterial" class="modal-overlay" @click.self="onCancelEdit">
+              <div class="modal-card">
+                <div class="modal-header">
+                  <strong>编辑材料</strong>
+                  <span class="muted" style="margin-left:12px">{{ editingMaterial.filename }}</span>
+                </div>
+                <div class="field">
+                  <label>文件名</label>
+                  <input class="input" v-model="editFilename" />
+                </div>
+                <div class="field">
+                  <label>内容（纯文本）</label>
+                  <textarea
+                    class="input mono"
+                    v-model="editContent"
+                    rows="16"
+                    style="font-size:13px;font-family:Consolas,monospace"
+                  ></textarea>
+                </div>
+                <div class="row" style="justify-content:flex-end;margin-top:12px">
+                  <button class="btn ghost" @click="onCancelEdit">取消</button>
+                  <button class="btn" :disabled="editSaving" @click="onSaveEdit">
+                    {{ editSaving ? '保存中...' : '保存' }}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -189,7 +221,7 @@ import { useRouter } from 'vue-router'
 import {
   listAgents, createAgent, deleteAgent,
   listCategoriesAdmin, createCategory, deleteCategory,
-  listMaterials, uploadMaterial, deleteMaterial,
+  listMaterials, uploadMaterial, deleteMaterial, getMaterial, updateMaterial,
   getKnowledge, extractKnowledge,
 } from '../api.js'
 
@@ -210,6 +242,12 @@ const selectedFile = ref(null)
 const uploading = ref(false)
 const extracting = ref(false)
 const extractMsg = ref('')
+
+// 编辑材料
+const editingMaterial = ref(null)
+const editContent = ref('')
+const editFilename = ref('')
+const editSaving = ref(false)
 
 const llmHint = computed(() => {
   // 从根接口读 llm_enabled（简化：默认提示）
@@ -317,6 +355,37 @@ async function onDeleteMaterial(id) {
   await deleteMaterial(id)
   await loadMaterials()
   await loadCats()
+}
+async function onEditMaterial(m) {
+  try {
+    const { data } = await getMaterial(m.id)
+    editingMaterial.value = data
+    editContent.value = data.content_text || ''
+    editFilename.value = data.filename || ''
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载材料失败')
+  }
+}
+function onCancelEdit() {
+  editingMaterial.value = null
+  editContent.value = ''
+  editFilename.value = ''
+}
+async function onSaveEdit() {
+  if (!editingMaterial.value) return
+  editSaving.value = true
+  try {
+    await updateMaterial(editingMaterial.value.id, {
+      filename: editFilename.value || undefined,
+      content_text: editContent.value,
+    })
+    editingMaterial.value = null
+    await loadMaterials()
+  } catch (e) {
+    alert(e.response?.data?.detail || '保存失败')
+  } finally {
+    editSaving.value = false
+  }
 }
 async function onExtract() {
   if (!matCatId.value) return

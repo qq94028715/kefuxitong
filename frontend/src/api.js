@@ -54,6 +54,10 @@ export const uploadMaterial = (categoryId, file) => {
 
 export const deleteMaterial = (id) => http.delete(`/admin/materials/${id}`)
 
+export const getMaterial = (id) => http.get(`/admin/materials/${id}`)
+
+export const updateMaterial = (id, data) => http.put(`/admin/materials/${id}`, data)
+
 // ---------- 知识库 ----------
 export const getKnowledge = (categoryId) =>
   http.get('/admin/knowledge', { params: { category_id: categoryId } })

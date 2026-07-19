@@ -51,7 +51,9 @@ from .schemas import (
     FinishReply,
     KnowledgeOut,
     LoginRequest,
+    MaterialDetailOut,
     MaterialOut,
+    MaterialUpdate,
     MessageOut,
     ScoreOut,
     SendMessageReply,
@@ -335,6 +337,44 @@ def delete_material(
     db.delete(m)
     db.commit()
     return {"detail": "已删除"}
+
+
+@app.get("/api/admin/materials/{material_id}", response_model=MaterialDetailOut)
+def get_material(
+    material_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    m = db.query(Material).filter(Material.id == material_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="材料不存在")
+    return m
+
+
+@app.put("/api/admin/materials/{material_id}", response_model=MaterialDetailOut)
+def update_material(
+    material_id: int,
+    req: MaterialUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    m = db.query(Material).filter(Material.id == material_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="材料不存在")
+
+    if req.filename is not None:
+        m.filename = req.filename
+
+    if req.content_text is not None:
+        m.content_text = req.content_text
+        # 同步更新物理文件
+        try:
+            from pathlib import Path
+            Path(m.file_path).write_text(req.content_text, encoding="utf-8")
+        except Exception:
+            raise HTTPException(status_code=500, detail="更新文件失败")
+
+    db.commit()
+    db.refresh(m)
+    return m
 
 
 # ---------- 知识库 ----------

@@ -60,6 +60,17 @@ class MaterialOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MaterialDetailOut(MaterialOut):
+    """单条材料详情，包含文本内容。"""
+    content_text: str = ""
+
+
+class MaterialUpdate(BaseModel):
+    """更新材料请求。"""
+    filename: Optional[str] = None
+    content_text: Optional[str] = None
+
+
 # ---------- 知识库 ----------
 class KnowledgeOut(BaseModel):
     id: int
