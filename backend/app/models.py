@@ -1,11 +1,12 @@
-"""数据模型。
+"""数据模型（v0.2 七张表）。
 
-核心实体：
-- User: 用户（admin 管理员 / agent 客服）
-- TrainingType: 训练类型（如 PVC训练、金属铭牌训练）
-- Corpus: 训练语料（客户问题 + 标准回答）
-- TrainingSession: 训练会话（客服一次训练的记录）
-- TrainingMessage: 训练消息（AI客户与客服的逐轮对话）
+两层知识架构：
+- Material: 管理员上传的原始材料（txt/md 聊天记录、产品资料）
+- Knowledge: AI 从材料中提取的结构化知识 JSON（模拟客户/评分都依赖它）
+
+对话与评分：
+- ChatSession / ChatMessage: 客服一次训练的会话与逐轮消息
+- Score: 一次训练结束后的结构化评分（一会对一会话）
 """
 import json
 from datetime import datetime
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -25,6 +27,8 @@ from .database import Base
 
 
 class User(Base):
+    """用户：admin 管理员 / agent 客服。"""
+
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -34,74 +38,154 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class TrainingType(Base):
-    __tablename__ = "training_types"
+class Category(Base):
+    """训练分类（如 PVC训练、金属铭牌训练）。"""
+
+    __tablename__ = "category"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(64), unique=True, nullable=False)
     description = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    corpus = relationship(
-        "Corpus", back_populates="training_type", cascade="all, delete-orphan"
+    materials = relationship(
+        "Material", back_populates="category", cascade="all, delete-orphan"
+    )
+    knowledge = relationship(
+        "Knowledge", back_populates="category", cascade="all, delete-orphan"
     )
 
 
-class Corpus(Base):
-    __tablename__ = "corpus"
+class Material(Base):
+    """管理员上传的原始材料文件。content_text 为提取的纯文本，供 AI 处理。"""
+
+    __tablename__ = "materials"
 
     id = Column(Integer, primary_key=True, index=True)
-    training_type_id = Column(
-        Integer, ForeignKey("training_types.id"), nullable=False, index=True
+    category_id = Column(
+        Integer, ForeignKey("category.id"), nullable=False, index=True
     )
-    customer_question = Column(Text, nullable=False)  # 客户会问的问题
-    standard_answer = Column(Text, nullable=False)  # 标准回答
+    filename = Column(String(255), nullable=False)  # 原始文件名
+    file_path = Column(String(512), nullable=False)  # 服务器存储路径
+    content_text = Column(Text, default="")  # 提取的纯文本
+    file_type = Column(String(16), default="txt")  # txt / md
+    file_size = Column(Integer, default=0)  # 字节数
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    training_type = relationship("TrainingType", back_populates="corpus")
+    category = relationship("Category", back_populates="materials")
 
 
-class TrainingSession(Base):
-    __tablename__ = "training_sessions"
+class Knowledge(Base):
+    """AI 从材料中提取的结构化知识 JSON。
+
+    content_json 结构：
+    {
+      "category": "PVC",
+      "required_questions": ["尺寸","数量","厚度","用途"],
+      "common_objections": ["价格太高","交期太长"],
+      "recommended_responses": [{"scenario":"...","guideline":"..."}],
+      "product_specs": {...}
+    }
+    """
+
+    __tablename__ = "knowledge"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(
+        Integer, ForeignKey("category.id"), nullable=False, index=True
+    )
+    content_json = Column(Text, nullable=False, default="{}")
+    version = Column(Integer, default=1)  # 每次重新提取自增
+    source_material_ids = Column(Text, default="[]")  # 提取自哪些材料
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    category = relationship("Category", back_populates="knowledge")
+
+    def get_content(self) -> dict:
+        return json.loads(self.content_json or "{}")
+
+    def set_content(self, data: dict) -> None:
+        self.content_json = json.dumps(data, ensure_ascii=False)
+
+    def get_source_ids(self) -> list[int]:
+        return json.loads(self.source_material_ids or "[]")
+
+    def set_source_ids(self, ids: list[int]) -> None:
+        self.source_material_ids = json.dumps(ids)
+
+
+class ChatSession(Base):
+    """客服一次训练会话。"""
+
+    __tablename__ = "chat_session"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    training_type_id = Column(
-        Integer, ForeignKey("training_types.id"), nullable=False
-    )
-    # 本次训练抽取的语料 ID 列表（JSON 数组）
-    questions = Column(Text, nullable=False, default="[]")
-    current_index = Column(Integer, default=0)  # 当前进行到第几题
+    category_id = Column(Integer, ForeignKey("category.id"), nullable=False)
     status = Column(String(16), default="in_progress")  # in_progress / completed
-    score = Column(Float, default=0.0)  # 累计得分（满分100）
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
 
     messages = relationship(
-        "TrainingMessage",
+        "ChatMessage",
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="TrainingMessage.id",
+        order_by="ChatMessage.id",
+    )
+    score = relationship(
+        "Score", back_populates="session", uselist=False, cascade="all, delete-orphan"
     )
 
-    def get_question_ids(self) -> list[int]:
-        return json.loads(self.questions or "[]")
 
-    def set_question_ids(self, ids: list[int]) -> None:
-        self.questions = json.dumps(ids)
+class ChatMessage(Base):
+    """对话消息：customer(AI客户) / agent(客服)。"""
 
-
-class TrainingMessage(Base):
-    __tablename__ = "training_messages"
+    __tablename__ = "chat_message"
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(
-        Integer, ForeignKey("training_sessions.id"), nullable=False, index=True
+        Integer, ForeignKey("chat_session.id"), nullable=False, index=True
     )
-    role = Column(String(16), nullable=False)  # customer(AI客户) / agent(客服)
+    role = Column(String(16), nullable=False)  # customer / agent
     content = Column(Text, nullable=False)
-    score = Column(Float, nullable=True)  # 仅 agent 消息有评分
-    feedback = Column(Text, default="")  # 仅 agent 消息有反馈
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    session = relationship("TrainingSession", back_populates="messages")
+    session = relationship("ChatSession", back_populates="messages")
+
+
+class Score(Base):
+    """一次训练的结构化评分（一对一会话）。"""
+
+    __tablename__ = "score"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer, ForeignKey("chat_session.id"), nullable=False, unique=True, index=True
+    )
+    total_score = Column(Float, default=0.0)  # 0~100
+    advantages = Column(Text, default="[]")  # JSON 数组
+    mistakes = Column(Text, default="[]")  # JSON 数组
+    suggestions = Column(Text, default="[]")  # JSON 数组
+    summary = Column(Text, default="")  # 总评
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("ChatSession", back_populates="score")
+
+    def get_advantages(self) -> list[str]:
+        return json.loads(self.advantages or "[]")
+
+    def get_mistakes(self) -> list[str]:
+        return json.loads(self.mistakes or "[]")
+
+    def get_suggestions(self) -> list[str]:
+        return json.loads(self.suggestions or "[]")
+
+    def set_lists(
+        self,
+        advantages: list[str],
+        mistakes: list[str],
+        suggestions: list[str],
+    ) -> None:
+        self.advantages = json.dumps(advantages, ensure_ascii=False)
+        self.mistakes = json.dumps(mistakes, ensure_ascii=False)
+        self.suggestions = json.dumps(suggestions, ensure_ascii=False)

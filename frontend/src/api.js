@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const http = axios.create({
   baseURL: '/api',
-  timeout: 15000,
+  timeout: 120000, // LLM 调用可能较慢，放宽到 2 分钟
 })
 
 http.interceptors.request.use((config) => {
@@ -33,23 +33,47 @@ export const listAgents = () => http.get('/admin/agents')
 export const createAgent = (data) => http.post('/admin/agents', data)
 export const deleteAgent = (id) => http.delete(`/admin/agents/${id}`)
 
-// ---------- 管理员：训练类型 ----------
-export const listTrainingTypesAdmin = () => http.get('/admin/training-types')
-export const createTrainingType = (data) => http.post('/admin/training-types', data)
-export const deleteTrainingType = (id) => http.delete(`/admin/training-types/${id}`)
+// ---------- 分类 ----------
+export const listCategoriesAdmin = () => http.get('/admin/categories')
+export const listCategoriesAgent = () => http.get('/agent/categories')
+export const createCategory = (data) => http.post('/admin/categories', data)
+export const deleteCategory = (id) => http.delete(`/admin/categories/${id}`)
 
-// ---------- 管理员：语料 ----------
-export const listCorpus = (trainingTypeId) =>
-  http.get('/admin/corpus', { params: { training_type_id: trainingTypeId } })
-export const createCorpus = (data) => http.post('/admin/corpus', data)
-export const deleteCorpus = (id) => http.delete(`/admin/corpus/${id}`)
+// ---------- 材料 ----------
+export const listMaterials = (categoryId) =>
+  http.get('/admin/materials', { params: { category_id: categoryId } })
+
+export const uploadMaterial = (categoryId, file) => {
+  const form = new FormData()
+  form.append('category_id', categoryId)
+  form.append('file', file)
+  return http.post('/admin/materials/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const deleteMaterial = (id) => http.delete(`/admin/materials/${id}`)
+
+// ---------- 知识库 ----------
+export const getKnowledge = (categoryId) =>
+  http.get('/admin/knowledge', { params: { category_id: categoryId } })
+
+export const extractKnowledge = (categoryId) =>
+  http.post('/admin/knowledge/extract', { category_id: categoryId })
 
 // ---------- 客服：训练 ----------
-export const listTrainingTypesAgent = () => http.get('/agent/training-types')
-export const startSession = (trainingTypeId) =>
-  http.post('/agent/sessions', { training_type_id: trainingTypeId })
+export const startSession = (categoryId) =>
+  http.post('/agent/sessions', { category_id: categoryId })
+
 export const getSession = (id) => http.get(`/agent/sessions/${id}`)
 export const listMessages = (sessionId) =>
   http.get(`/agent/sessions/${sessionId}/messages`)
+
 export const sendMessage = (sessionId, content) =>
   http.post(`/agent/sessions/${sessionId}/messages`, { content })
+
+export const finishSession = (sessionId) =>
+  http.post(`/agent/sessions/${sessionId}/finish`)
+
+export const getScore = (sessionId) =>
+  http.get(`/agent/sessions/${sessionId}/score`)

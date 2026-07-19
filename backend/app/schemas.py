@@ -1,6 +1,6 @@
-"""Pydantic 请求/响应模型。"""
+"""Pydantic 请求/响应模型（v0.2）。"""
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -32,33 +32,41 @@ class AgentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# ---------- 训练类型 ----------
-class TrainingTypeCreate(BaseModel):
+# ---------- 分类 ----------
+class CategoryCreate(BaseModel):
     name: str
     description: str = ""
 
 
-class TrainingTypeOut(BaseModel):
+class CategoryOut(BaseModel):
     id: int
     name: str
     description: str
-    corpus_count: int = 0
+    material_count: int = 0
+    knowledge_version: int = 0  # 0 表示尚未提取知识
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# ---------- 语料 ----------
-class CorpusCreate(BaseModel):
-    training_type_id: int
-    customer_question: str
-    standard_answer: str
-
-
-class CorpusOut(BaseModel):
+# ---------- 材料 ----------
+class MaterialOut(BaseModel):
     id: int
-    training_type_id: int
-    customer_question: str
-    standard_answer: str
+    category_id: int
+    filename: str
+    file_type: str
+    file_size: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------- 知识库 ----------
+class KnowledgeOut(BaseModel):
+    id: int
+    category_id: int
+    version: int
+    content: dict
+    source_material_ids: list[int]
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -66,23 +74,21 @@ class CorpusOut(BaseModel):
 
 # ---------- 训练会话 ----------
 class SessionCreateRequest(BaseModel):
-    training_type_id: int
+    category_id: int
 
 
 class SessionOut(BaseModel):
     id: int
-    training_type_id: int
+    category_id: int
+    category_name: str = ""
     status: str
-    score: float
-    total_questions: int
-    current_index: int
     started_at: datetime
     ended_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# ---------- 训练消息 ----------
+# ---------- 对话消息 ----------
 class SendMessageRequest(BaseModel):
     content: str
 
@@ -91,19 +97,48 @@ class MessageOut(BaseModel):
     id: int
     role: str
     content: str
-    score: Optional[float] = None
-    feedback: str = ""
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class TrainReply(BaseModel):
-    """客服发送一条消息后的统一回复。"""
+class SendMessageReply(BaseModel):
+    """客服发一条消息后，返回 AI 客户的下一句。"""
 
-    agent_message: MessageOut  # 客服刚发的消息（含评分反馈）
-    next_customer_message: Optional[MessageOut] = None  # AI客户的下一句话
-    is_finished: bool
-    current_index: int
-    total_questions: int
+    agent_message: MessageOut
+    customer_message: Optional[MessageOut] = None  # AI 客户回复（训练结束可能为空）
+    is_finished: bool = False  # AI 客户主动结束对话
+
+
+# ---------- 评分 ----------
+class ScoreOut(BaseModel):
+    id: int
+    session_id: int
     total_score: float
+    advantages: list[str]
+    mistakes: list[str]
+    suggestions: list[str]
+    summary: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FinishReply(BaseModel):
+    """结束训练触发评分后的响应。"""
+
+    session: SessionOut
+    score: ScoreOut
+
+
+# ---------- 知识提取 ----------
+class ExtractKnowledgeRequest(BaseModel):
+    category_id: int
+
+
+class ExtractKnowledgeReply(BaseModel):
+    category_id: int
+    knowledge_id: int
+    version: int
+    used_llm: bool  # 是否使用了真实 LLM
+    message: str
