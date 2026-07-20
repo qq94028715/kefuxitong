@@ -65,6 +65,12 @@ export const getKnowledge = (categoryId) =>
 export const extractKnowledge = (categoryId) =>
   http.post('/admin/knowledge/extract', { category_id: categoryId })
 
+// ---------- 管理员：训练成绩 ----------
+export const listAdminSessions = (params = {}) =>
+  http.get('/admin/sessions', { params })
+
+export const getAdminSession = (id) => http.get(`/admin/sessions/${id}`)
+
 // ---------- 客服：训练 ----------
 export const startSession = (categoryId) =>
   http.post('/agent/sessions', { category_id: categoryId })

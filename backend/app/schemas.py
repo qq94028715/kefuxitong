@@ -142,6 +142,42 @@ class FinishReply(BaseModel):
     score: ScoreOut
 
 
+# ---------- 管理员：训练成绩查询 ----------
+class AdminSessionListItem(BaseModel):
+    """管理员视角的训练记录列表项（含分数摘要）。"""
+
+    id: int
+    user_id: int
+    username: str
+    category_id: int
+    category_name: str
+    status: str
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    message_count: int = 0
+    score_total: Optional[float] = None  # None 表示尚未评分
+    score_summary: str = ""
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminSessionDetail(BaseModel):
+    """管理员视角的训练记录详情（含完整对话+评分）。"""
+
+    id: int
+    user_id: int
+    username: str
+    category_id: int
+    category_name: str
+    status: str
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    messages: list[MessageOut]
+    score: Optional[ScoreOut] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ---------- 知识提取 ----------
 class ExtractKnowledgeRequest(BaseModel):
     category_id: int

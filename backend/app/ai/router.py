@@ -72,6 +72,20 @@ def generate_reply_stream(
     # ===== 第三层：DeepSeek =====
     logger.info("Router: Quick/Cache miss → DeepSeek (intent=%s)", intent)
 
+    # 未配置 LLM 时：直接走兜底，避免 stream_chat yield None 导致客户沉默
+    if not llm.is_llm_enabled():
+        fallback = get_reply(intent, knowledge, agent_content)
+        if not fallback:
+            # quick_reply 也没命中 → 用规则模式生成（按 required_questions 追问）
+            from .simulator import _reply_with_rules
+            fallback = _reply_with_rules(knowledge, history, turn_count, max_turns)
+        if not fallback:
+            fallback = "好的，我再了解下。"
+        logger.info("Router: LLM 未启用，走规则兜底 (intent=%s)", intent)
+        yield from _simulated_stream(fallback)
+        yield "[DONE]"
+        return
+
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
     history_text = build_history_text(history)
     p = load_prompt(
@@ -93,7 +107,7 @@ def generate_reply_stream(
     full_reply = ""
     try:
         for chunk in llm.stream_chat(messages, temperature=0.8, max_tokens=200):
-            if chunk:
+            if chunk:  # 跳过 None（未配置或失败时）
                 full_reply += chunk
                 yield chunk
     except Exception as e:
@@ -108,6 +122,15 @@ def generate_reply_stream(
         # LLM 成功生成 → 进 Cache
         if full_reply.strip():
             cache.set(intent, agent_content, knowledge_id, full_reply.strip())
+        elif not full_reply.strip():
+            # LLM 返回空内容（如 yield None 后直接结束）→ 兜底
+            fallback = get_reply(intent, knowledge, agent_content)
+            if not fallback:
+                from .simulator import _reply_with_rules
+                fallback = _reply_with_rules(knowledge, history, turn_count, max_turns)
+            if not fallback:
+                fallback = "好的，我再了解下。"
+            yield from _simulated_stream(fallback)
 
     yield "[DONE]"
 

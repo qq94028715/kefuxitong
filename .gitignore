@@ -54,3 +54,5 @@ backup/*
 *.sqlite3
 *.db
 *.db-journal
+*.db-shm
+*.db-wal

@@ -383,3 +383,16 @@ th {
   margin-bottom: 16px;
   font-size: 16px;
 }
+
+/* 分数颜色 */
+.ok-text {
+  color: var(--success);
+}
+
+.warn-text {
+  color: var(--warn);
+}
+
+.danger-text {
+  color: var(--danger);
+}

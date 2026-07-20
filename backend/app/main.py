@@ -9,12 +9,14 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
+from .ai import cache as reply_cache
 from .ai.evaluator import evaluate_session
 from .ai.knowledge import (
     extract_knowledge,
@@ -44,6 +46,8 @@ from .models import (
 from .schemas import (
     AgentCreate,
     AgentOut,
+    AdminSessionDetail,
+    AdminSessionListItem,
     CategoryCreate,
     CategoryOut,
     ExtractKnowledgeReply,
@@ -294,17 +298,37 @@ async def upload_material(
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
 
+    # 文件大小限制（5MB）
+    MAX_FILE_SIZE = 5 * 1024 * 1024
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="文件过大，限制 5MB 以内")
+
+    # 扩展名白名单校验
+    raw_name = file.filename or "untitled.txt"
+    filename = Path(raw_name).name  # 剥掉路径，防穿越
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+    ALLOWED_EXTS = {"txt", "md", "json"}
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型：.{ext}，仅支持 {', '.join(sorted(ALLOWED_EXTS))}",
+        )
+    file_type = ext
+
     # 尝试 utf-8，失败用 gbk（Windows 中文常见）
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         text = content.decode("gbk", errors="ignore")
 
-    filename = file.filename or "untitled.txt"
-    file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
     safe_name = f"{category_id}_{uuid.uuid4().hex[:8]}_{filename}"
     save_path = UPLOAD_DIR / safe_name
+    # 二次防御：确认最终路径仍在 UPLOAD_DIR 内
+    try:
+        save_path.resolve().relative_to(UPLOAD_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="非法的文件路径")
     save_path.write_bytes(content)
 
     m = Material(
@@ -400,6 +424,8 @@ def extract(
         k, used_llm = extract_knowledge(db, req.category_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 知识库更新后，清空该分类的旧回复缓存，避免新人训练用旧知识
+    reply_cache.invalidate(req.category_id)
     msg = (
         f"已用 LLM 提取知识库（v{k.version}）"
         if used_llm
@@ -411,6 +437,87 @@ def extract(
         version=k.version,
         used_llm=used_llm,
         message=msg,
+    )
+
+
+# ---------- 训练成绩（管理员） ----------
+@app.get("/api/admin/sessions", response_model=list[AdminSessionListItem])
+def admin_list_sessions(
+    user_id: int | None = None,
+    category_id: int | None = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员查看训练记录列表（含分数摘要）。
+
+    可按 user_id / category_id 过滤。按 id 倒序（最新在前）。
+    """
+    q = (
+        db.query(ChatSession, User, Category)
+        .join(User, ChatSession.user_id == User.id)
+        .join(Category, ChatSession.category_id == Category.id)
+    )
+    if user_id:
+        q = q.filter(ChatSession.user_id == user_id)
+    if category_id:
+        q = q.filter(ChatSession.category_id == category_id)
+    rows = q.order_by(ChatSession.id.desc()).all()
+
+    result = []
+    for s, u, c in rows:
+        msg_count = (
+            db.query(ChatMessage).filter(ChatMessage.session_id == s.id).count()
+        )
+        score_total = s.score.total_score if s.score else None
+        score_summary = s.score.summary if s.score else ""
+        result.append(
+            AdminSessionListItem(
+                id=s.id,
+                user_id=s.user_id,
+                username=u.username,
+                category_id=s.category_id,
+                category_name=c.name,
+                status=s.status,
+                started_at=s.started_at,
+                ended_at=s.ended_at,
+                message_count=msg_count,
+                score_total=score_total,
+                score_summary=score_summary,
+            )
+        )
+    return result
+
+
+@app.get("/api/admin/sessions/{session_id}", response_model=AdminSessionDetail)
+def admin_get_session(
+    session_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员查看某次训练的完整对话与评分详情。"""
+    row = (
+        db.query(ChatSession, User, Category)
+        .join(User, ChatSession.user_id == User.id)
+        .join(Category, ChatSession.category_id == Category.id)
+        .filter(ChatSession.id == session_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="训练记录不存在")
+    s, u, c = row
+    return AdminSessionDetail(
+        id=s.id,
+        user_id=s.user_id,
+        username=u.username,
+        category_id=s.category_id,
+        category_name=c.name,
+        status=s.status,
+        started_at=s.started_at,
+        ended_at=s.ended_at,
+        messages=[
+            MessageOut.model_validate(m, from_attributes=True) for m in s.messages
+        ],
+        score=_score_out(s.score) if s.score else None,
     )
 
 

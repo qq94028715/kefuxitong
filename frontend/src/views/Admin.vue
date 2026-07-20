@@ -14,6 +14,7 @@
           <div class="tab" :class="{ active: tab === 'agents' }" @click="tab = 'agents'">客服账号</div>
           <div class="tab" :class="{ active: tab === 'cats' }" @click="tab = 'cats'">训练分类</div>
           <div class="tab" :class="{ active: tab === 'mat' }" @click="tab = 'mat'">材料与知识库</div>
+          <div class="tab" :class="{ active: tab === 'scores' }" @click="onTabScores">训练成绩</div>
         </div>
 
         <!-- 客服账号 -->
@@ -210,6 +211,120 @@
             </div>
           </div>
         </div>
+
+        <!-- 训练成绩 -->
+        <div v-if="tab === 'scores'">
+          <div class="page-title">训练成绩查询</div>
+          <div class="page-sub">查看所有客服的训练记录与 AI 评分，支持按客服/分类筛选</div>
+
+          <!-- 筛选 -->
+          <div class="row" style="margin-bottom: 16px">
+            <select class="input" v-model="scoreFilter.user_id">
+              <option :value="null">全部客服</option>
+              <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.username }}</option>
+            </select>
+            <select class="input" v-model="scoreFilter.category_id">
+              <option :value="null">全部分类</option>
+              <option v-for="c in cats" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <button class="btn" style="flex: 0 0 auto" @click="loadScoreList">查询</button>
+          </div>
+
+          <!-- 列表 -->
+          <table v-if="scoreList.length">
+            <thead>
+              <tr>
+                <th>ID</th><th>客服</th><th>分类</th><th>状态</th>
+                <th>消息数</th><th>分数</th><th>总评</th><th>时间</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in scoreList" :key="s.id">
+                <td>{{ s.id }}</td>
+                <td>{{ s.username }}</td>
+                <td>{{ s.category_name }}</td>
+                <td>
+                  <span v-if="s.status === 'completed'" class="tag ok">已完成</span>
+                  <span v-else class="tag warn">进行中</span>
+                </td>
+                <td>{{ s.message_count }}</td>
+                <td>
+                  <strong v-if="s.score_total !== null" :class="scoreClass(s.score_total)">{{ s.score_total.toFixed(1) }}</strong>
+                  <span v-else class="muted">-</span>
+                </td>
+                <td class="muted" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.score_summary || '-' }}</td>
+                <td>{{ fmt(s.started_at) }}</td>
+                <td><button class="btn sm" @click="onViewScore(s.id)">查看</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="empty">暂无训练记录</div>
+
+          <!-- 详情弹窗 -->
+          <div v-if="scoreDetail" class="modal-overlay" @click.self="scoreDetail = null">
+            <div class="modal-card" style="max-width:760px">
+              <div class="modal-header">
+                <strong>训练详情 #{{ scoreDetail.id }}</strong>
+                <span class="muted" style="margin-left:12px">
+                  {{ scoreDetail.username }} · {{ scoreDetail.category_name }} · {{ fmt(scoreDetail.started_at) }}
+                </span>
+              </div>
+
+              <!-- 评分卡片 -->
+              <div v-if="scoreDetail.score" class="card" style="background:var(--bg);margin-bottom:12px">
+                <div class="row" style="align-items:center;margin-bottom:8px">
+                  <div style="font-size:28px;font-weight:bold" :class="scoreClass(scoreDetail.score.total_score)">
+                    {{ scoreDetail.score.total_score.toFixed(1) }}
+                  </div>
+                  <div class="muted" style="margin-left:8px">/ 100</div>
+                </div>
+                <div class="field">
+                  <label>总评</label>
+                  <div>{{ scoreDetail.score.summary }}</div>
+                </div>
+                <div v-if="scoreDetail.score.advantages?.length" class="field">
+                  <label>优点</label>
+                  <ul>
+                    <li v-for="(t, i) in scoreDetail.score.advantages" :key="i" style="color:var(--success)">{{ t }}</li>
+                  </ul>
+                </div>
+                <div v-if="scoreDetail.score.mistakes?.length" class="field">
+                  <label>不足</label>
+                  <ul>
+                    <li v-for="(t, i) in scoreDetail.score.mistakes" :key="i" style="color:var(--danger)">{{ t }}</li>
+                  </ul>
+                </div>
+                <div v-if="scoreDetail.score.suggestions?.length" class="field">
+                  <label>建议</label>
+                  <ul>
+                    <li v-for="(t, i) in scoreDetail.score.suggestions" :key="i">{{ t }}</li>
+                  </ul>
+                </div>
+              </div>
+              <div v-else class="empty" style="margin-bottom:12px">该训练尚未评分</div>
+
+              <!-- 对话记录 -->
+              <div class="page-sub" style="margin-bottom:8px">对话记录（{{ scoreDetail.messages.length }} 条）</div>
+              <div style="max-height:360px;overflow-y:auto">
+                <div
+                  v-for="m in scoreDetail.messages"
+                  :key="m.id"
+                  style="margin-bottom:8px;padding:8px 12px;border-radius:6px"
+                  :style="m.role === 'agent' ? 'background:var(--bg)' : 'background:var(--bg-soft, #f0f7ff);border-left:3px solid var(--primary)'"
+                >
+                  <div class="muted" style="font-size:12px;margin-bottom:2px">
+                    {{ m.role === 'agent' ? '客服' : 'AI客户' }} · {{ fmt(m.created_at) }}
+                  </div>
+                  <div>{{ m.content }}</div>
+                </div>
+              </div>
+
+              <div class="row" style="justify-content:flex-end;margin-top:12px">
+                <button class="btn ghost" @click="scoreDetail = null">关闭</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -223,6 +338,7 @@ import {
   listCategoriesAdmin, createCategory, deleteCategory,
   listMaterials, uploadMaterial, deleteMaterial, getMaterial, updateMaterial,
   getKnowledge, extractKnowledge,
+  listAdminSessions, getAdminSession,
 } from '../api.js'
 
 const router = useRouter()
@@ -248,6 +364,11 @@ const editingMaterial = ref(null)
 const editContent = ref('')
 const editFilename = ref('')
 const editSaving = ref(false)
+
+// 训练成绩
+const scoreList = ref([])
+const scoreFilter = reactive({ user_id: null, category_id: null })
+const scoreDetail = ref(null)
 
 const llmHint = computed(() => {
   // 从根接口读 llm_enabled（简化：默认提示）
@@ -402,6 +523,36 @@ async function onExtract() {
   } finally {
     extracting.value = false
   }
+}
+
+// ---------- 训练成绩 ----------
+function onTabScores() {
+  tab.value = 'scores'
+  loadScoreList()
+}
+async function loadScoreList() {
+  try {
+    const params = {}
+    if (scoreFilter.user_id) params.user_id = scoreFilter.user_id
+    if (scoreFilter.category_id) params.category_id = scoreFilter.category_id
+    const { data } = await listAdminSessions(params)
+    scoreList.value = data
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载失败')
+  }
+}
+async function onViewScore(id) {
+  try {
+    const { data } = await getAdminSession(id)
+    scoreDetail.value = data
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载详情失败')
+  }
+}
+function scoreClass(score) {
+  if (score >= 80) return 'ok-text'
+  if (score >= 60) return 'warn-text'
+  return 'danger-text'
 }
 
 onMounted(async () => {
