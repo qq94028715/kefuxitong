@@ -90,6 +90,9 @@ export const sendMessage = (sessionId, content) =>
  */
 export const streamMessage = (sessionId, content, onToken, onDone) => {
   const token = localStorage.getItem('token')
+  // 60秒超时保护，防止 AI 响应慢导致按钮永久禁用
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 60000)
   return fetch(`/api/agent/sessions/${sessionId}/stream`, {
     method: 'POST',
     headers: {
@@ -97,7 +100,9 @@ export const streamMessage = (sessionId, content, onToken, onDone) => {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ content }),
+    signal: controller.signal,
   }).then(async (res) => {
+    clearTimeout(timeout)
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: '连接失败' }))
       throw new Error(err.detail || '请求失败')
@@ -128,7 +133,13 @@ export const streamMessage = (sessionId, content, onToken, onDone) => {
         }
       }
     }
-  });
+  }).catch((e) => {
+    clearTimeout(timeout)
+    if (e.name === 'AbortError') {
+      throw new Error('AI 响应超时，请重试')
+    }
+    throw e
+  })
 };
 
 export const finishSession = (sessionId) =>

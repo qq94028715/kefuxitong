@@ -56,7 +56,7 @@
             <button class="btn" style="flex:0 0 auto" :disabled="!inputText.trim() || sending" @click="onSend">
               发送
             </button>
-            <button class="btn ghost" style="flex:0 0 auto" :disabled="sending" @click="onFinish">
+            <button class="btn ghost" style="flex:0 0 auto" @click="onFinish">
               结束并评分
             </button>
           </div>
@@ -270,6 +270,14 @@ async function autoFinish() {
 
 async function onFinish() {
   if (!confirm('确认结束训练并评分？')) return
+  // 如果流式消息还在发送中，强制结束（刷新消息列表对齐服务端）
+  if (sending.value) {
+    sending.value = false
+    try {
+      const { data: msgs } = await listMessages(session.value.id)
+      messages.value = msgs
+    } catch (_) { /* 忽略 */ }
+  }
   sending.value = true
   try {
     const { data } = await finishSession(session.value.id)
