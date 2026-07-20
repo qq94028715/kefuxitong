@@ -5,13 +5,44 @@
 
 LLM 模式：用 customer.txt prompt，多轮自然对话，会追问。
 规则模式：按 required_questions 逐条问，问完结束（保证无 key 也能跑）。
+
+客户性格（v0.4）：每次会话随机分配一种性格，影响表达方式。
 """
+import hashlib
 import json
+import random
 
 from . import llm, prompt
 
 # 对话结束标记（simulator 返回此串表示客户主动结束）
 END_MARKER = "[END]"
+
+# 客户性格列表：影响客户表达方式，让对话更真实多样
+CUSTOMER_PERSONALITIES = [
+    "你性格急躁，不喜欢等，说话简短直接，容易不耐烦。如果客服啰嗦或答不到点子上，你会催促。",
+    "你性格犹豫，拿不定主意，经常说'再想想''不太确定'，需要客服给建议和信心才敢下单。",
+    "你很挑剔，对价格、质量、交期都很敏感，会反复比较和质疑，喜欢挑毛病。",
+    "你对产品完全不懂，问的问题比较基础，容易被专业术语搞晕，需要客服用大白话解释。",
+    "你很懂行，会问专业问题，会对比竞品，会砍价，不容易被忽悠。",
+    "你性格随和，比较好说话，但也容易被带偏，需要客服引导才能说清需求。",
+]
+
+
+def get_personality(history: list) -> str:
+    """根据对话历史确定性选择客户性格。
+
+    用客户的第一句话作为种子，保证同一会话性格固定、不同会话性格多样。
+    """
+    seed_str = ""
+    for m in history:
+        if m.role == "customer":
+            seed_str = m.content or ""
+            break
+    if not seed_str:
+        seed_str = str(len(history))
+    seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed)
+    return rng.choice(CUSTOMER_PERSONALITIES)
 
 
 def build_history_text(messages: list) -> str:
@@ -61,6 +92,7 @@ def _reply_with_llm(
 ) -> str | None:
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
     history_text = build_history_text(history)
+    personality = get_personality(history)
     p = prompt.load_prompt(
         "customer",
         knowledge_json=knowledge_json,
@@ -68,6 +100,7 @@ def _reply_with_llm(
         history=history_text,
         turn_count=turn_count,
         max_turns=max_turns,
+        customer_personality=personality,
     )
     messages = [
         {

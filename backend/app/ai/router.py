@@ -19,7 +19,7 @@ from . import llm, cache
 from .intent import classify, INTENT_OTHER, INTENT_START, get_intent_label
 from .prompt import load_prompt
 from .quick_reply import get_reply
-from .simulator import build_history_text
+from .simulator import build_history_text, get_personality
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,7 @@ def generate_reply_stream(
 
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
     history_text = build_history_text(history)
+    personality = get_personality(history)
     p = load_prompt(
         "customer",
         knowledge_json=knowledge_json,
@@ -95,6 +96,7 @@ def generate_reply_stream(
         history=history_text,
         turn_count=turn_count,
         max_turns=max_turns,
+        customer_personality=personality,
     )
     messages = [
         {
