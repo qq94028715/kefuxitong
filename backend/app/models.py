@@ -57,7 +57,13 @@ class Category(Base):
 
 
 class Material(Base):
-    """管理员上传的原始材料文件。content_text 为提取的纯文本，供 AI 处理。"""
+    """管理员上传的原始材料文件。content_text 为提取的纯文本，供 AI 处理。
+
+    quality 标注案例类型：
+    - excellent: 优秀成交案例（客服做得好，成功促成交易）
+    - normal:    普通案例（一般对话）
+    - failed:    失败/丢单案例（客服失误导致丢单）
+    """
 
     __tablename__ = "materials"
 
@@ -70,6 +76,7 @@ class Material(Base):
     content_text = Column(Text, default="")  # 提取的纯文本
     file_type = Column(String(16), default="txt")  # txt / md
     file_size = Column(Integer, default=0)  # 字节数
+    quality = Column(String(16), default="normal")  # excellent / normal / failed
     created_at = Column(DateTime, default=datetime.utcnow)
 
     category = relationship("Category", back_populates="materials")

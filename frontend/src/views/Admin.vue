@@ -96,6 +96,14 @@
                 <label>上传材料文件</label>
                 <input type="file" class="input" @change="onFileChange" accept=".txt,.md,.json" />
               </div>
+              <div class="field">
+                <label>案例类型</label>
+                <select class="input" v-model="uploadQuality">
+                  <option value="normal">普通案例</option>
+                  <option value="excellent">优秀成交案例</option>
+                  <option value="failed">失败丢单案例</option>
+                </select>
+              </div>
               <div class="row">
                 <button class="btn" :disabled="!selectedFile || uploading" @click="onUpload">
                   {{ uploading ? '上传中...' : '上传材料' }}
@@ -111,12 +119,13 @@
             <div class="page-sub" style="margin-top:8px">已上传材料</div>
             <table v-if="materials.length">
               <thead>
-                <tr><th>文件名</th><th>类型</th><th>大小</th><th>上传时间</th><th>操作</th></tr>
+                <tr><th>文件名</th><th>类型</th><th>案例</th><th>大小</th><th>上传时间</th><th>操作</th></tr>
               </thead>
               <tbody>
                 <tr v-for="m in materials" :key="m.id">
                   <td>{{ m.filename }}</td>
                   <td><span class="tag">{{ m.file_type }}</span></td>
+                  <td><span class="tag" :class="qualityTagClass(m.quality)">{{ qualityLabel(m.quality) }}</span></td>
                   <td class="muted">{{ humanSize(m.file_size) }}</td>
                   <td>{{ fmt(m.created_at) }}</td>
                   <td>
@@ -174,6 +183,22 @@
                     <li v-for="k in knowledge.content.key_knowledge" :key="k">{{ k }}</li>
                   </ul>
                 </div>
+                <div v-if="knowledge.content.success_patterns?.length" class="field">
+                  <label>成功模式（优秀案例提炼）</label>
+                  <div v-for="(s, i) in knowledge.content.success_patterns" :key="i" class="card" style="background:var(--panel);margin-bottom:8px;padding:10px;border-left:3px solid var(--success)">
+                    <div><strong>{{ s.scenario }}</strong></div>
+                    <div style="font-size:13px;margin-top:4px">技巧：{{ s.technique }}</div>
+                    <div v-if="s.example" style="font-size:13px;color:var(--text-soft);margin-top:2px">示例：{{ s.example }}</div>
+                  </div>
+                </div>
+                <div v-if="knowledge.content.failure_patterns?.length" class="field">
+                  <label>失败模式（丢单案例预警）</label>
+                  <div v-for="(f, i) in knowledge.content.failure_patterns" :key="i" class="card" style="background:var(--panel);margin-bottom:8px;padding:10px;border-left:3px solid var(--danger)">
+                    <div><strong>{{ f.scenario }}</strong></div>
+                    <div style="font-size:13px;margin-top:4px;color:var(--danger)">失误：{{ f.mistake }}</div>
+                    <div v-if="f.consequence" style="font-size:13px;color:var(--text-soft);margin-top:2px">后果：{{ f.consequence }}</div>
+                  </div>
+                </div>
                 <div v-if="knowledge.content._note" class="muted" style="margin-top:8px">
                   ⚠ {{ knowledge.content._note }}
                 </div>
@@ -191,6 +216,14 @@
                 <div class="field">
                   <label>文件名</label>
                   <input class="input" v-model="editFilename" />
+                </div>
+                <div class="field">
+                  <label>案例类型</label>
+                  <select class="input" v-model="editQuality">
+                    <option value="normal">普通案例</option>
+                    <option value="excellent">优秀成交案例</option>
+                    <option value="failed">失败丢单案例</option>
+                  </select>
                 </div>
                 <div class="field">
                   <label>内容（纯文本）</label>
@@ -370,6 +403,7 @@ const materials = ref([])
 const knowledge = ref(null)
 const selectedFile = ref(null)
 const uploading = ref(false)
+const uploadQuality = ref('normal')
 const extracting = ref(false)
 const extractMsg = ref('')
 
@@ -377,6 +411,7 @@ const extractMsg = ref('')
 const editingMaterial = ref(null)
 const editContent = ref('')
 const editFilename = ref('')
+const editQuality = ref('normal')
 const editSaving = ref(false)
 
 // 训练成绩
@@ -398,6 +433,15 @@ function humanSize(b) {
   if (b < 1024) return b + ' B'
   if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB'
   return (b / 1024 / 1024).toFixed(2) + ' MB'
+}
+function qualityLabel(q) {
+  const map = { excellent: '优秀', normal: '普通', failed: '失败' }
+  return map[q] || '普通'
+}
+function qualityTagClass(q) {
+  if (q === 'excellent') return 'ok'
+  if (q === 'failed') return 'warn'
+  return 'gray'
 }
 function logout() {
   localStorage.clear()
@@ -457,8 +501,9 @@ async function onUpload() {
   if (!selectedFile.value || !matCatId.value) return
   uploading.value = true
   try {
-    await uploadMaterial(matCatId.value, selectedFile.value)
+    await uploadMaterial(matCatId.value, selectedFile.value, uploadQuality.value)
     selectedFile.value = null
+    uploadQuality.value = 'normal'
     await loadMaterials()
     await loadCats()
   } catch (e) {
@@ -497,6 +542,7 @@ async function onEditMaterial(m) {
     editingMaterial.value = data
     editContent.value = data.content_text || ''
     editFilename.value = data.filename || ''
+    editQuality.value = data.quality || 'normal'
   } catch (e) {
     alert(e.response?.data?.detail || '加载材料失败')
   }
@@ -505,6 +551,7 @@ function onCancelEdit() {
   editingMaterial.value = null
   editContent.value = ''
   editFilename.value = ''
+  editQuality.value = 'normal'
 }
 async function onSaveEdit() {
   if (!editingMaterial.value) return
@@ -513,6 +560,7 @@ async function onSaveEdit() {
     await updateMaterial(editingMaterial.value.id, {
       filename: editFilename.value || undefined,
       content_text: editContent.value,
+      quality: editQuality.value,
     })
     editingMaterial.value = null
     await loadMaterials()

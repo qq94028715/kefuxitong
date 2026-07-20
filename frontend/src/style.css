@@ -173,6 +173,16 @@ th {
   color: var(--text-soft);
 }
 
+.tag.ok {
+  background: #ecfdf5;
+  color: var(--success);
+}
+
+.tag.warn {
+  background: #fffbeb;
+  color: var(--warn);
+}
+
 .muted {
   color: var(--text-soft);
 }

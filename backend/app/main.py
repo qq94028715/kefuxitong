@@ -96,6 +96,20 @@ DEFAULT_KNOWLEDGE: dict[str, dict] = {
             "常规 PVC 不耐高温（≤60℃）",
             "可定制尺寸与厚度",
         ],
+        "success_patterns": [
+            {
+                "scenario": "客户问耐温",
+                "technique": "先确认使用场景温度，再推荐合适材质",
+                "example": "常规 PVC 长期 60℃，更高温推荐 CPVC",
+            },
+        ],
+        "failure_patterns": [
+            {
+                "scenario": "未确认户外用途",
+                "mistake": "推荐了普通 PVC 而非抗 UV 级",
+                "consequence": "户外使用会老化发黄，客户投诉",
+            },
+        ],
     },
     "金属铭牌训练": {
         "category": "金属铭牌训练",
@@ -122,6 +136,20 @@ DEFAULT_KNOWLEDGE: dict[str, dict] = {
             "支持多工艺组合",
             "加急需另收加急费",
             "不同材质价格差异大，需按预算推荐",
+        ],
+        "success_patterns": [
+            {
+                "scenario": "客户问 MOQ",
+                "technique": "先确认规格再报起订量，提供阶梯价",
+                "example": "常规 100 片起订，量大有阶梯价",
+            },
+        ],
+        "failure_patterns": [
+            {
+                "scenario": "未确认材质就报价",
+                "mistake": "报了铝合金价格，客户实际要黄铜",
+                "consequence": "价格差距大，客户觉得不专业而流失",
+            },
         ],
     },
 }
@@ -290,6 +318,7 @@ def list_materials(
 @app.post("/api/admin/materials/upload", response_model=MaterialOut)
 async def upload_material(
     category_id: int = Form(...),
+    quality: str = Form("normal"),
     file: UploadFile = File(...),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -297,6 +326,14 @@ async def upload_material(
     cat = db.query(Category).filter(Category.id == category_id).first()
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
+
+    # 案例类型校验
+    ALLOWED_QUALITY = {"excellent", "normal", "failed"}
+    if quality not in ALLOWED_QUALITY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"案例类型无效，仅支持 {', '.join(sorted(ALLOWED_QUALITY))}",
+        )
 
     # 文件大小限制（5MB）
     MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -338,6 +375,7 @@ async def upload_material(
         content_text=text,
         file_type=file_type,
         file_size=len(content),
+        quality=quality,
     )
     db.add(m)
     db.commit()
@@ -386,6 +424,15 @@ def update_material(
 
     if req.filename is not None:
         m.filename = req.filename
+
+    if req.quality is not None:
+        ALLOWED_QUALITY = {"excellent", "normal", "failed"}
+        if req.quality not in ALLOWED_QUALITY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"案例类型无效，仅支持 {', '.join(sorted(ALLOWED_QUALITY))}",
+            )
+        m.quality = req.quality
 
     if req.content_text is not None:
         m.content_text = req.content_text

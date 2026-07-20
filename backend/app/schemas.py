@@ -55,6 +55,7 @@ class MaterialOut(BaseModel):
     filename: str
     file_type: str
     file_size: int
+    quality: str = "normal"  # excellent / normal / failed
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -69,6 +70,7 @@ class MaterialUpdate(BaseModel):
     """更新材料请求。"""
     filename: Optional[str] = None
     content_text: Optional[str] = None
+    quality: Optional[str] = None  # excellent / normal / failed
 
 
 # ---------- 知识库 ----------

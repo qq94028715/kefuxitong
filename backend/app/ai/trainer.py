@@ -84,3 +84,28 @@ def build_training_text(
     chunks = deduplicate(split_chunks(raw))
     text = "\n\n".join(chunks)
     return text, [m.id for m in materials]
+
+
+def build_training_text_by_quality(
+    db: Session, category_id: int
+) -> dict[str, tuple[str, list[int]]]:
+    """按案例类型分别加载材料并处理。
+
+    返回 {quality: (text, material_ids)} 字典。
+    quality 为 excellent / normal / failed，只包含有材料的类型。
+    """
+    materials = load_all_materials(db, category_id)
+    if not materials:
+        return {}
+
+    result: dict[str, tuple[str, list[int]]] = {}
+    for quality in ("excellent", "normal", "failed"):
+        subset = [m for m in materials if (m.quality or "normal") == quality]
+        if not subset:
+            continue
+        raw = materials_to_text(subset)
+        chunks = deduplicate(split_chunks(raw))
+        text = "\n\n".join(chunks)
+        result[quality] = (text, [m.id for m in subset])
+
+    return result

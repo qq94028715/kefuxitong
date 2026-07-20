@@ -3,8 +3,13 @@
 核心原则（用户强调）：
 不要把原始聊天记录直接喂给模拟客户。而是先由本模块用 LLM 把
 材料总结成结构化知识 JSON（required_questions / common_objections /
-recommended_responses / product_specs 等），simulator 与 evaluator
-都只依赖这份知识，不再接触原始材料。
+recommended_responses / product_specs / success_patterns / failure_patterns），
+simulator 与 evaluator 都只依赖这份知识，不再接触原始材料。
+
+案例分类（v0.4）：
+- excellent: 优秀成交案例 → 提取 success_patterns（成功话术/成交技巧）
+- failed:    失败丢单案例 → 提取 failure_patterns（失败原因/高频错误）
+- normal:    普通案例 → 提取基础产品知识
 
 无 LLM 时走规则 fallback（关键词扫描），质量有限但保证流程可跑。
 """
@@ -15,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Category, Knowledge
 from . import llm, prompt
-from .trainer import build_training_text
+from .trainer import build_training_text, build_training_text_by_quality
 
 logger = logging.getLogger(__name__)
 
@@ -51,22 +56,30 @@ def extract_knowledge(db: Session, category_id: int) -> tuple[Knowledge, bool]:
     if not category:
         raise ValueError("分类不存在")
 
-    text, material_ids = build_training_text(db, category_id)
-    if not text:
+    # 按案例类型分别加载材料
+    by_quality = build_training_text_by_quality(db, category_id)
+    if not by_quality:
         raise ValueError("该分类没有可用材料，请先上传材料")
+
+    # 合并所有材料 ID
+    all_material_ids = []
+    for _, ids in by_quality.values():
+        all_material_ids.extend(ids)
 
     used_llm = False
     content: dict | None = None
 
     if llm.is_llm_enabled():
-        content = _extract_with_llm(text, category.name)
+        content = _extract_with_llm(by_quality, category.name)
         if content:
             used_llm = True
         else:
             logger.warning("LLM 调用失败，回退到规则模式")
 
     if not content:
-        content = _extract_with_rules(text, category.name)
+        # 规则模式：用所有材料拼接
+        all_text, _ = build_training_text(db, category_id)
+        content = _extract_with_rules(all_text, category.name)
 
     # 版本号递增
     latest = get_latest_knowledge(db, category_id)
@@ -77,19 +90,35 @@ def extract_knowledge(db: Session, category_id: int) -> tuple[Knowledge, bool]:
         version=version,
     )
     k.set_content(content)
-    k.set_source_ids(material_ids)
+    k.set_source_ids(all_material_ids)
     db.add(k)
     db.commit()
     db.refresh(k)
     return k, used_llm
 
 
-def _extract_with_llm(materials_text: str, category_name: str) -> dict | None:
-    """用 LLM + knowledge.txt 提取结构化知识。"""
+def _extract_with_llm(
+    by_quality: dict[str, tuple[str, list[int]]],
+    category_name: str,
+) -> dict | None:
+    """用 LLM + knowledge.txt 提取结构化知识。
+
+    按案例类型分别输入材料，提取成功/失败模式。
+    """
+    excellent_text = by_quality.get("excellent", ("", []))[0][:MAX_MATERIAL_CHARS]
+    failed_text = by_quality.get("failed", ("", []))[0][:MAX_MATERIAL_CHARS]
+    normal_text = by_quality.get("normal", ("", []))[0][:MAX_MATERIAL_CHARS]
+    # 如果没有 normal，用所有材料兜底
+    if not normal_text:
+        all_text = "\n\n".join(t[0] for t in by_quality.values())
+        normal_text = all_text[:MAX_MATERIAL_CHARS]
+
     p = prompt.load_prompt(
         "knowledge",
         category_name=category_name,
-        materials=materials_text[:MAX_MATERIAL_CHARS],
+        excellent_materials=excellent_text or "（无优秀案例）",
+        failed_materials=failed_text or "（无失败案例）",
+        normal_materials=normal_text or "（无普通案例）",
     )
     messages = [
         {"role": "system", "content": "你是一名数据工程师，只输出 JSON，不输出任何解释。"},
@@ -128,6 +157,8 @@ def _extract_with_rules(text: str, category_name: str) -> dict:
         "recommended_responses": [],
         "product_specs": {},
         "key_knowledge": [],
+        "success_patterns": [],
+        "failure_patterns": [],
         "_note": "规则模式提取（未配置 LLM_API_KEY），质量有限。"
-        "配置后重新提取可获得完整知识库。",
+        "配置后重新提取可获得完整知识库（含成功/失败模式）。",
     }
