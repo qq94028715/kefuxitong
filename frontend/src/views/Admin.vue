@@ -278,6 +278,20 @@
                   </div>
                   <div class="muted" style="margin-left:8px">/ 100</div>
                 </div>
+
+                <!-- 四维评分 -->
+                <div v-if="scoreDetail.score.dimension_scores && Object.keys(scoreDetail.score.dimension_scores).length" style="margin-bottom:12px">
+                  <div v-for="dim in dimConfig" :key="dim.key" style="margin-bottom:6px">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px">
+                      <span>{{ dim.label }}</span>
+                      <span :class="adminDimClass(dim.key)">{{ scoreDetail.score.dimension_scores[dim.key] || 0 }}/{{ dim.max }}</span>
+                    </div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+                      <div :style="{ width: adminDimPercent(dim.key) + '%', height: '100%', background: adminDimColor(dim.key), borderRadius: '3px' }"></div>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="field">
                   <label>总评</label>
                   <div>{{ scoreDetail.score.summary }}</div>
@@ -553,6 +567,31 @@ function scoreClass(score) {
   if (score >= 80) return 'ok-text'
   if (score >= 60) return 'warn-text'
   return 'danger-text'
+}
+
+// 四维评分配置
+const dimConfig = [
+  { key: '需求确认', label: '需求确认', max: 40 },
+  { key: '产品知识', label: '产品知识', max: 20 },
+  { key: '销售技巧', label: '销售技巧', max: 20 },
+  { key: '成交推进', label: '成交推进', max: 20 },
+]
+function adminDimPercent(key) {
+  const val = scoreDetail.value?.score?.dimension_scores?.[key] || 0
+  const max = dimConfig.find(d => d.key === key)?.max || 20
+  return Math.min(100, (val / max) * 100)
+}
+function adminDimClass(key) {
+  const ratio = adminDimPercent(key)
+  if (ratio >= 80) return 'ok-text'
+  if (ratio >= 60) return 'warn-text'
+  return 'danger-text'
+}
+function adminDimColor(key) {
+  const ratio = adminDimPercent(key)
+  if (ratio >= 80) return '#22c55e'
+  if (ratio >= 60) return '#f59e0b'
+  return '#ef4444'
 }
 
 onMounted(async () => {

@@ -772,6 +772,7 @@ def finish_session(
 
     score = Score(session_id=s.id, total_score=result["score"], summary=result["summary"])
     score.set_lists(result["advantages"], result["mistakes"], result["suggestions"])
+    score.set_dimension_scores(result.get("dimension_scores", {}))
     db.add(score)
     s.status = "completed"
     s.ended_at = datetime.utcnow()
@@ -832,6 +833,7 @@ def _session_out(s: ChatSession, category_name: str = "") -> SessionOut:
 def _score_out(sc: Score) -> ScoreOut:
     return ScoreOut(
         id=sc.id, session_id=sc.session_id, total_score=sc.total_score,
+        dimension_scores=sc.get_dimension_scores(),
         advantages=sc.get_advantages(), mistakes=sc.get_mistakes(),
         suggestions=sc.get_suggestions(), summary=sc.summary,
         created_at=sc.created_at,

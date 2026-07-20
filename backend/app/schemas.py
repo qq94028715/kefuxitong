@@ -126,6 +126,7 @@ class ScoreOut(BaseModel):
     id: int
     session_id: int
     total_score: float
+    dimension_scores: dict = {}  # 四维分数 {"需求确认":35,"产品知识":15,...}
     advantages: list[str]
     mistakes: list[str]
     suggestions: list[str]

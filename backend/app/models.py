@@ -163,6 +163,7 @@ class Score(Base):
         Integer, ForeignKey("chat_session.id"), nullable=False, unique=True, index=True
     )
     total_score = Column(Float, default=0.0)  # 0~100
+    dimension_scores = Column(Text, default="{}")  # JSON: {"需求确认":35,"产品知识":15,...}
     advantages = Column(Text, default="[]")  # JSON 数组
     mistakes = Column(Text, default="[]")  # JSON 数组
     suggestions = Column(Text, default="[]")  # JSON 数组
@@ -180,6 +181,9 @@ class Score(Base):
     def get_suggestions(self) -> list[str]:
         return json.loads(self.suggestions or "[]")
 
+    def get_dimension_scores(self) -> dict:
+        return json.loads(self.dimension_scores or "{}")
+
     def set_lists(
         self,
         advantages: list[str],
@@ -189,3 +193,6 @@ class Score(Base):
         self.advantages = json.dumps(advantages, ensure_ascii=False)
         self.mistakes = json.dumps(mistakes, ensure_ascii=False)
         self.suggestions = json.dumps(suggestions, ensure_ascii=False)
+
+    def set_dimension_scores(self, dimension_scores: dict) -> None:
+        self.dimension_scores = json.dumps(dimension_scores, ensure_ascii=False)

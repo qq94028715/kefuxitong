@@ -1,14 +1,28 @@
 """AI 评分（evaluator）。
 
 对话结束后，用 LLM 扮演客服主管，对整段对话结构化评分。
-输出：{score, advantages, mistakes, suggestions, summary}，存入 score 表。
+输出：{score, dimension_scores, advantages, mistakes, suggestions, summary}，存入 score 表。
 
-LLM 模式：用 score.txt prompt，五维度评分。
+四维评分（用户指定权重）：
+- 需求确认 40 分
+- 产品知识 20 分
+- 销售技巧 20 分
+- 成交推进 20 分
+
+LLM 模式：用 score.txt prompt，四维评分。
 规则模式：基于关键词命中度评分（检查客服是否提到必要信息）。
 """
 import json
 
 from . import llm, prompt
+
+# 四维评分维度及其满分
+DIMENSIONS = {
+    "需求确认": 40,
+    "产品知识": 20,
+    "销售技巧": 20,
+    "成交推进": 20,
+}
 
 
 def build_dialogue_text(messages: list) -> str:
@@ -31,11 +45,12 @@ def evaluate_session(
 
     返回 dict：
     {
-        "score": float,           # 0~100
-        "advantages": list[str],  # 做得好的点
-        "mistakes": list[str],    # 失误或遗漏
-        "suggestions": list[str], # 改进建议
-        "summary": str,           # 一句话总评
+        "score": float,               # 0~100 总分
+        "dimension_scores": dict,     # 四维分数 {"需求确认": 35, ...}
+        "advantages": list[str],      # 做得好的点
+        "mistakes": list[str],        # 失误或遗漏
+        "suggestions": list[str],     # 改进建议
+        "summary": str,               # 一句话总评
     }
     """
     if llm.is_llm_enabled():
@@ -82,13 +97,39 @@ def _normalize(data: dict) -> dict:
             return [v]
         return []
 
+    def normalize_dimension_scores(raw) -> dict:
+        """规整四维分数，确保每个维度都有值且不超满分。"""
+        if not isinstance(raw, dict):
+            raw = {}
+        result = {}
+        for dim, max_score in DIMENSIONS.items():
+            try:
+                val = float(raw.get(dim, 0))
+            except (TypeError, ValueError):
+                val = 0.0
+            val = max(0.0, min(max_score, val))
+            result[dim] = round(val, 1)
+        return result
+
+    # 解析四维分数
+    dimension_scores = normalize_dimension_scores(data.get("dimension_scores"))
+
+    # 总分：优先用 LLM 返回的 score，但如果四维之和差异过大则用四维之和
     try:
-        score = float(data.get("score", 0))
+        llm_score = float(data.get("score", 0))
     except (TypeError, ValueError):
-        score = 0.0
+        llm_score = 0.0
+    dim_sum = sum(dimension_scores.values())
+    # 如果 LLM 总分和四维之和差异超过 5 分，以四维之和为准
+    if abs(llm_score - dim_sum) > 5:
+        score = dim_sum
+    else:
+        score = llm_score
     score = max(0.0, min(100.0, score))
+
     return {
         "score": round(score, 1),
+        "dimension_scores": dimension_scores,
         "advantages": as_list(data.get("advantages")),
         "mistakes": as_list(data.get("mistakes")),
         "suggestions": as_list(data.get("suggestions")),
@@ -107,21 +148,47 @@ def _evaluate_with_rules(
     """无 LLM 时：基于关键词命中度评分。
 
     检查客服回答中是否提到了 required_questions 中的各项。
+    四维分数按命中情况分配：
+    - 需求确认（40分）：按 required_questions 命中比例
+    - 产品知识（20分）：是否提到产品规格/工艺关键词
+    - 销售技巧（20分）：是否有礼貌用语/确认语句
+    - 成交推进（20分）：是否提到报价/交期/下单
     """
     required = knowledge.get("required_questions") or [
-        "尺寸",
-        "数量",
-        "材质",
-        "用途",
+        "尺寸", "数量", "材质", "用途",
     ]
     agent_text = " ".join(m.content for m in messages if m.role == "agent")
 
     hit = [r for r in required if r in agent_text]
     miss = [r for r in required if r not in agent_text]
 
+    # 需求确认：按命中比例
     hit_ratio = len(hit) / len(required) if required else 0
-    # 映射到 15~90 分区间
-    score = round(15 + hit_ratio * 75, 1)
+    dim_confirm = round(40 * hit_ratio, 1)
+
+    # 产品知识：检查规格/工艺关键词
+    spec_keywords = ["mm", "厚度", "材质", "工艺", "PVC", "CPVC", "不锈钢", "铝",
+                     "腐蚀", "丝印", "UV", "覆膜", "雕刻", "冲压"]
+    spec_hits = sum(1 for k in spec_keywords if k in agent_text)
+    dim_knowledge = round(min(20, spec_hits * 5), 1)
+
+    # 销售技巧：检查礼貌/确认用语
+    skill_keywords = ["您好", "请问", "好的", "没问题", "可以", "建议", "推荐"]
+    skill_hits = sum(1 for k in skill_keywords if k in agent_text)
+    dim_skill = round(min(20, skill_hits * 5), 1)
+
+    # 成交推进：检查成交关键词
+    deal_keywords = ["报价", "交期", "下单", "定金", "发货", "联系", "微信", "样品"]
+    deal_hits = sum(1 for k in deal_keywords if k in agent_text)
+    dim_deal = round(min(20, deal_hits * 5), 1)
+
+    dimension_scores = {
+        "需求确认": dim_confirm,
+        "产品知识": dim_knowledge,
+        "销售技巧": dim_skill,
+        "成交推进": dim_deal,
+    }
+    score = round(sum(dimension_scores.values()), 1)
 
     advantages = [f"确认了「{h}」" for h in hit] or ["态度积极，有回应"]
     mistakes = [f"未确认「{m}」" for m in miss] or []
@@ -135,6 +202,7 @@ def _evaluate_with_rules(
     )
     return {
         "score": score,
+        "dimension_scores": dimension_scores,
         "advantages": advantages,
         "mistakes": mistakes,
         "suggestions": suggestions,

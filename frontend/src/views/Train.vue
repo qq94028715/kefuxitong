@@ -70,6 +70,24 @@
                 <div class="muted">{{ score.summary }}</div>
               </div>
             </div>
+
+            <!-- 四维评分 -->
+            <div v-if="score.dimension_scores && Object.keys(score.dimension_scores).length" class="dim-grid">
+              <div v-for="dim in dimensions" :key="dim.key" class="dim-item">
+                <div class="dim-label">
+                  <span>{{ dim.label }}</span>
+                  <span :class="dimScoreClass(dim.key)">{{ score.dimension_scores[dim.key] || 0 }}/{{ dim.max }}</span>
+                </div>
+                <div class="dim-bar">
+                  <div
+                    class="dim-bar-fill"
+                    :class="dimBarClass(dim.key)"
+                    :style="{ width: dimPercent(dim.key) + '%' }"
+                  ></div>
+                </div>
+              </div>
+            </div>
+
             <div class="score-grid">
               <div class="score-item">
                 <div class="score-title ok">✓ 做得好</div>
@@ -132,6 +150,31 @@ const scoreLevel = computed(() => {
   if (s >= 60) return 'mid'
   return 'low'
 })
+
+// 四维评分配置
+const dimensions = [
+  { key: '需求确认', label: '需求确认', max: 40 },
+  { key: '产品知识', label: '产品知识', max: 20 },
+  { key: '销售技巧', label: '销售技巧', max: 20 },
+  { key: '成交推进', label: '成交推进', max: 20 },
+]
+function dimPercent(key) {
+  const val = score.value?.dimension_scores?.[key] || 0
+  const max = dimensions.find(d => d.key === key)?.max || 20
+  return Math.min(100, (val / max) * 100)
+}
+function dimScoreClass(key) {
+  const ratio = dimPercent(key)
+  if (ratio >= 80) return 'ok-text'
+  if (ratio >= 60) return 'warn-text'
+  return 'danger-text'
+}
+function dimBarClass(key) {
+  const ratio = dimPercent(key)
+  if (ratio >= 80) return 'bar-high'
+  if (ratio >= 60) return 'bar-mid'
+  return 'bar-low'
+}
 
 function logout() {
   localStorage.clear()
@@ -297,6 +340,40 @@ onMounted(loadCats)
 .score-num.mid { color: #f59e0b; }
 .score-num.low { color: #ef4444; }
 .score-label { font-size: 14px; color: var(--muted); }
+
+/* 四维评分 */
+.dim-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+.dim-item { }
+.dim-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.dim-bar {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.dim-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+.bar-high { background: #22c55e; }
+.bar-mid { background: #f59e0b; }
+.bar-low { background: #ef4444; }
+
 .score-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
