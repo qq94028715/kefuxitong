@@ -73,6 +73,9 @@ export const listAdminSessions = (params = {}) =>
 
 export const getAdminSession = (id) => http.get(`/admin/sessions/${id}`)
 
+export const getScoreTrends = (params = {}) =>
+  http.get('/admin/score-trends', { params })
+
 // ---------- 客服：训练 ----------
 export const startSession = (categoryId) =>
   http.post('/agent/sessions', { category_id: categoryId })

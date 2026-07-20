@@ -8,7 +8,7 @@ v0.3 核心升级：Intent 三层路由 + 流式输出。
 import json
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -63,6 +63,9 @@ from .schemas import (
     MaterialUpdate,
     MessageOut,
     ScoreOut,
+    ScoreTrendsResponse,
+    ScoreTrendSeries,
+    ScoreTrendPoint,
     SendMessageReply,
     SendMessageRequest,
     SessionCreateRequest,
@@ -591,6 +594,102 @@ def admin_get_session(
         ],
         score=_score_out(s.score) if s.score else None,
     )
+
+
+@app.get("/api/admin/score-trends", response_model=ScoreTrendsResponse)
+def admin_score_trends(
+    user_id: int | None = None,
+    category_id: int | None = None,
+    days: int = 90,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员查看训练成绩成长趋势。
+
+    按 (客服 × 分类) 聚合每次评分的时间序列，输出分数走势与成长方向。
+    可按时段（最近 days 天，默认 90）、客服、分类过滤。
+    """
+    cutoff = datetime.utcnow() - timedelta(days=max(1, days))
+
+    q = (
+        db.query(Score, ChatSession, User, Category)
+        .join(ChatSession, Score.session_id == ChatSession.id)
+        .join(User, ChatSession.user_id == User.id)
+        .join(Category, ChatSession.category_id == Category.id)
+        .filter(ChatSession.ended_at.isnot(None))
+        .filter(ChatSession.ended_at >= cutoff)
+    )
+    if user_id:
+        q = q.filter(ChatSession.user_id == user_id)
+    if category_id:
+        q = q.filter(ChatSession.category_id == category_id)
+    rows = q.order_by(ChatSession.ended_at.asc()).all()
+
+    # 按 (user_id, category_id) 分组
+    grouped: dict[tuple[int, int], dict] = {}
+    for sc, s, u, c in rows:
+        key = (s.user_id, s.category_id)
+        grp = grouped.setdefault(
+            key,
+            {
+                "user_id": s.user_id,
+                "username": u.username,
+                "category_id": s.category_id,
+                "category_name": c.name,
+                "points": [],
+            },
+        )
+        d = s.ended_at or sc.created_at
+        grp["points"].append(
+            ScoreTrendPoint(
+                date=d.strftime("%Y-%m-%d"),
+                session_id=s.id,
+                total_score=sc.total_score,
+                dimension_scores=sc.get_dimension_scores(),
+            )
+        )
+
+    # 汇总每条序列的首/末分、成长方向与次数
+    series: list[ScoreTrendSeries] = []
+    for key, grp in grouped.items():
+        pts = sorted(grp["points"], key=lambda p: p.date)
+        scores = [p.total_score for p in pts]
+        first = scores[0] if scores else None
+        latest = scores[-1] if scores else None
+        count = len(scores)
+        if count >= 2:
+            delta = round(latest - first, 1)
+            trend = "up" if latest > first else ("down" if latest < first else "flat")
+        else:
+            delta = 0.0
+            trend = "flat"
+        series.append(
+            ScoreTrendSeries(
+                user_id=grp["user_id"],
+                username=grp["username"],
+                category_id=grp["category_id"],
+                category_name=grp["category_name"],
+                points=pts,
+                first_score=first,
+                latest_score=latest,
+                delta=delta,
+                trend=trend,
+                count=count,
+            )
+        )
+
+    series.sort(key=lambda x: (x.username, x.category_name))
+
+    users = [
+        {"id": u.id, "name": u.username}
+        for u in db.query(User).filter(User.role == "agent").order_by(User.id).all()
+    ]
+    categories = [
+        {"id": c.id, "name": c.name}
+        for c in db.query(Category).order_by(Category.id).all()
+    ]
+
+    return ScoreTrendsResponse(users=users, categories=categories, series=series)
 
 
 # ===================== 客服接口 =====================

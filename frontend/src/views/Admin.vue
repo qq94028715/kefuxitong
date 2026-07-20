@@ -15,6 +15,7 @@
           <div class="tab" :class="{ active: tab === 'cats' }" @click="tab = 'cats'">训练分类</div>
           <div class="tab" :class="{ active: tab === 'mat' }" @click="tab = 'mat'">材料与知识库</div>
           <div class="tab" :class="{ active: tab === 'scores' }" @click="onTabScores">训练成绩</div>
+          <div class="tab" :class="{ active: tab === 'trend' }" @click="onTabTrend">成绩趋势</div>
         </div>
 
         <!-- 客服账号 -->
@@ -396,20 +397,68 @@
             </div>
           </div>
         </div>
+
+        <!-- 成绩趋势 -->
+        <div v-if="tab === 'trend'">
+          <div class="page-title">训练成绩成长趋势</div>
+          <div class="page-sub">按「客服 × 分类」聚合每次训练评分，直观看培训是否有效——分数持续上升说明成长明显。</div>
+
+          <!-- 筛选 -->
+          <div class="row" style="margin-bottom: 16px">
+            <select class="input" v-model="trendFilter.user_id">
+              <option :value="null">全部客服</option>
+              <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.username }}</option>
+            </select>
+            <select class="input" v-model="trendFilter.category_id">
+              <option :value="null">全部分类</option>
+              <option v-for="c in cats" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <select class="input" v-model="trendFilter.days">
+              <option :value="30">最近 30 天</option>
+              <option :value="90">最近 90 天</option>
+              <option :value="180">最近 180 天</option>
+              <option :value="365">最近 1 年</option>
+            </select>
+            <button class="btn" style="flex: 0 0 auto" @click="loadTrends">查询</button>
+          </div>
+
+          <!-- 成长趋势汇总卡片 -->
+          <div v-if="trendSeries.length" class="trend-cards">
+            <div v-for="s in trendSeries" :key="s.user_id + '-' + s.category_id" class="trend-card">
+              <div class="trend-card-head">{{ s.username }} · {{ s.category_name }}</div>
+              <div class="trend-card-body">
+                <div class="trend-score" :class="scoreClass(s.latest_score)">
+                  {{ s.latest_score != null ? s.latest_score.toFixed(1) : '-' }}
+                </div>
+                <div class="trend-delta" :class="trendDeltaClass(s.trend)">
+                  <template v-if="s.trend === 'up'">↑ 进步 {{ s.delta.toFixed(1) }}</template>
+                  <template v-else-if="s.trend === 'down'">↓ 退步 {{ Math.abs(s.delta).toFixed(1) }}</template>
+                  <template v-else>→ 持平</template>
+                </div>
+              </div>
+              <div class="trend-card-foot">共 {{ s.count }} 次训练</div>
+            </div>
+          </div>
+
+          <!-- 折线图 -->
+          <div v-if="trendSeries.length" ref="trendChart" class="trend-chart"></div>
+          <div v-else class="empty">该筛选条件下暂无已评分的训练记录</div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, nextTick, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import * as echarts from 'echarts'
 import {
   listAgents, createAgent, deleteAgent,
   listCategoriesAdmin, createCategory, deleteCategory,
   listMaterials, uploadMaterial, deleteMaterial, getMaterial, updateMaterial,
   getKnowledge, extractKnowledge,
-  listAdminSessions, getAdminSession,
+  listAdminSessions, getAdminSession, getScoreTrends,
 } from '../api.js'
 
 const router = useRouter()
@@ -444,6 +493,12 @@ const editSaving = ref(false)
 const scoreList = ref([])
 const scoreFilter = reactive({ user_id: null, category_id: null })
 const scoreDetail = ref(null)
+
+// 成绩趋势
+const trendSeries = ref([])
+const trendFilter = reactive({ user_id: null, category_id: null, days: 90 })
+const trendChart = ref(null)
+let trendChartInstance = null
 
 const llmHint = computed(() => {
   // 从根接口读 llm_enabled（简化：默认提示）
@@ -656,6 +711,95 @@ function scoreClass(score) {
   if (score >= 60) return 'warn-text'
   return 'danger-text'
 }
+function trendDeltaClass(trend) {
+  if (trend === 'up') return 'ok-text'
+  if (trend === 'down') return 'danger-text'
+  return 'muted'
+}
+
+// ---------- 成绩趋势 ----------
+function onTabTrend() {
+  tab.value = 'trend'
+  loadTrends()
+}
+async function loadTrends() {
+  try {
+    const params = { days: trendFilter.days }
+    if (trendFilter.user_id) params.user_id = trendFilter.user_id
+    if (trendFilter.category_id) params.category_id = trendFilter.category_id
+    const { data } = await getScoreTrends(params)
+    trendSeries.value = data.series || []
+    await nextTick()
+    renderTrendChart()
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载趋势失败')
+  }
+}
+function renderTrendChart() {
+  if (!trendChart.value) return
+  if (!trendChartInstance) {
+    trendChartInstance = echarts.init(trendChart.value)
+  }
+  // 所有系列出现的日期并集（排序去重），作为 X 轴
+  const dateSet = new Set()
+  trendSeries.value.forEach((s) => s.points.forEach((p) => dateSet.add(p.date)))
+  const dates = Array.from(dateSet).sort()
+
+  const palette = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16']
+  const series = trendSeries.value.map((s, idx) => {
+    const map = {}
+    s.points.forEach((p) => { map[p.date] = p.total_score })
+    return {
+      name: `${s.username}-${s.category_name}`,
+      type: 'line',
+      smooth: true,
+      connectNulls: true,
+      symbol: 'circle',
+      symbolSize: 7,
+      lineStyle: { width: 2 },
+      itemStyle: { color: palette[idx % palette.length] },
+      data: dates.map((d) => (d in map ? map[d] : null)),
+    }
+  })
+
+  trendChartInstance.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (v) => (v == null ? '-' : v.toFixed(1) + ' 分'),
+    },
+    legend: {
+      type: 'scroll',
+      top: 0,
+      textStyle: { color: '#94a3b8' },
+    },
+    grid: { left: 48, right: 24, top: 48, bottom: 40 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#475569' } },
+      axisLabel: { color: '#94a3b8' },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      name: '分数',
+      nameTextStyle: { color: '#94a3b8' },
+      axisLabel: { color: '#94a3b8' },
+      splitLine: { lineStyle: { color: 'rgba(148,163,184,0.15)' } },
+    },
+    series,
+  }, true)
+  trendChartInstance.resize()
+}
+function disposeTrendChart() {
+  if (trendChartInstance) {
+    trendChartInstance.dispose()
+    trendChartInstance = null
+  }
+}
 
 // 四维评分配置
 const dimConfig = [
@@ -685,5 +829,16 @@ function adminDimColor(key) {
 onMounted(async () => {
   await loadAgents()
   await loadCats()
+  window.addEventListener('resize', onTrendResize)
 })
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onTrendResize)
+  disposeTrendChart()
+})
+watch(tab, (v) => {
+  if (v !== 'trend') disposeTrendChart()
+})
+function onTrendResize() {
+  if (trendChartInstance) trendChartInstance.resize()
+}
 </script>

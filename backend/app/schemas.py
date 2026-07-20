@@ -196,3 +196,34 @@ class ExtractKnowledgeReply(BaseModel):
     version: int
     used_llm: bool  # 是否使用了真实 LLM
     message: str
+
+
+# ---------- 管理员：训练成绩成长趋势 ----------
+class ScoreTrendPoint(BaseModel):
+    """某个 (客服×分类) 组合在某一日的评分点。"""
+
+    date: str  # YYYY-MM-DD
+    session_id: int
+    total_score: float
+    dimension_scores: dict = {}  # 四维分数
+
+
+class ScoreTrendSeries(BaseModel):
+    """一个 (客服×分类) 组合的成长趋势序列。"""
+
+    user_id: int
+    username: str
+    category_id: int
+    category_name: str
+    points: list[ScoreTrendPoint]
+    first_score: Optional[float] = None  # 区间内首条分数
+    latest_score: Optional[float] = None  # 区间内最新分数
+    delta: float = 0.0  # latest - first（>=2 条才有意义）
+    trend: str = "flat"  # up / down / flat
+    count: int = 0  # 区间内训练次数
+
+
+class ScoreTrendsResponse(BaseModel):
+    users: list[dict]  # 过滤用：[{"id","name"}]
+    categories: list[dict]  # 过滤用：[{"id","name"}]
+    series: list[ScoreTrendSeries]
