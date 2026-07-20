@@ -80,6 +80,7 @@ class KnowledgeOut(BaseModel):
     id: int
     category_id: int
     version: int
+    prompt_version: str = "v1.0"
     content: dict
     source_material_ids: list[int]
     created_at: datetime
@@ -177,6 +178,7 @@ class AdminSessionDetail(BaseModel):
     status: str
     started_at: datetime
     ended_at: Optional[datetime] = None
+    conversation_summary: str = ""
     messages: list[MessageOut]
     score: Optional[ScoreOut] = None
 

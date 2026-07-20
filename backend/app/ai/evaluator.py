@@ -15,6 +15,7 @@ LLM 模式：用 score.txt prompt，四维评分。
 import json
 
 from . import llm, prompt
+from .simulator import SUMMARY_THRESHOLD, RECENT_KEEP
 
 # 四维评分维度及其满分
 DIMENSIONS = {
@@ -25,10 +26,16 @@ DIMENSIONS = {
 }
 
 
-def build_dialogue_text(messages: list) -> str:
-    """把对话格式化为评分用文本。"""
+def build_dialogue_text(messages: list, summary: str = "") -> str:
+    """把对话格式化为评分用文本。summary 非空且对话较长时，用摘要替代早期内容压上下文。"""
     if not messages:
         return "（无对话内容）"
+    if summary and len(messages) > SUMMARY_THRESHOLD:
+        recent = messages[-RECENT_KEEP:]
+        recent_text = "\n".join(
+            f"{'客服' if m.role == 'agent' else '客户'}：{m.content}" for m in recent
+        )
+        return f"[对话历史摘要]\n{summary}\n\n[最近 {len(recent)} 条对话]\n{recent_text}"
     lines = []
     for m in messages:
         role = "客服" if m.role == "agent" else "客户"
@@ -40,6 +47,7 @@ def evaluate_session(
     messages: list,
     knowledge: dict,
     category_name: str,
+    conversation_summary: str = "",
 ) -> dict:
     """评估一次训练对话。
 
@@ -54,7 +62,7 @@ def evaluate_session(
     }
     """
     if llm.is_llm_enabled():
-        result = _evaluate_with_llm(messages, knowledge, category_name)
+        result = _evaluate_with_llm(messages, knowledge, category_name, conversation_summary)
         if result:
             return result
         # LLM 失败 → 规则 fallback
@@ -65,14 +73,17 @@ def _evaluate_with_llm(
     messages: list,
     knowledge: dict,
     category_name: str,
+    conversation_summary: str = "",
 ) -> dict | None:
-    dialogue = build_dialogue_text(messages)
+    dialogue = build_dialogue_text(messages, conversation_summary)
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
+    sales_process = knowledge.get("sales_process") or []
     p = prompt.load_prompt(
         "score",
         knowledge_json=knowledge_json,
         category_name=category_name,
         dialogue=dialogue,
+        sales_process=json.dumps(sales_process, ensure_ascii=False),
     )
     llm_messages = [
         {

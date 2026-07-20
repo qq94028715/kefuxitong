@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 # 截断长度：防止材料过长超出 LLM 上下文
 MAX_MATERIAL_CHARS = 8000
 
+# 知识提取 prompt 版本（优化 knowledge.txt 时递增，用于分数归因）
+PROMPT_VERSION = "v1.0"
+
+# 标准销售流程默认阶段（规则模式 / 无流程资料时的兜底）
+DEFAULT_SALES_PROCESS = ["确认需求", "推荐方案", "报价", "促进成交"]
+
 
 def get_latest_knowledge(db: Session, category_id: int) -> Knowledge | None:
     """获取某分类最新版知识。"""
@@ -105,6 +111,7 @@ def extract_knowledge(db: Session, category_id: int) -> tuple[Knowledge, bool]:
     k = Knowledge(
         category_id=category_id,
         version=version,
+        prompt_version=PROMPT_VERSION,
     )
     k.set_content(content)
     k.set_source_ids(all_material_ids)
@@ -210,6 +217,7 @@ def _extract_with_rules(text: str, category_name: str) -> dict:
         "key_knowledge": [],
         "success_patterns": [],
         "failure_patterns": [],
+        "sales_process": list(DEFAULT_SALES_PROCESS),
         "_note": "规则模式提取（未配置 LLM_API_KEY），质量有限。"
         "配置后重新提取可获得完整知识库（含成功/失败模式）。",
     }

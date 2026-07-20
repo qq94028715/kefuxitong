@@ -17,15 +17,17 @@ from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
 from .ai import cache as reply_cache
+from .ai import llm
 from .ai.evaluator import evaluate_session
 from .ai.parser import parse_file, SUPPORTED_EXTENSIONS
 from .ai.knowledge import (
     extract_knowledge,
     get_knowledge_for_training,
     get_latest_knowledge,
+    PROMPT_VERSION,
 )
 from .ai.router import generate_reply_stream
-from .ai.simulator import END_MARKER, generate_customer_reply
+from .ai.simulator import END_MARKER, generate_customer_reply, SUMMARY_THRESHOLD, summarize_older
 from .auth import (
     create_access_token,
     hash_password,
@@ -111,6 +113,7 @@ DEFAULT_KNOWLEDGE: dict[str, dict] = {
                 "consequence": "户外使用会老化发黄，客户投诉",
             },
         ],
+        "sales_process": ["确认需求", "推荐材质方案", "报价", "促进成交"],
     },
     "金属铭牌训练": {
         "category": "金属铭牌训练",
@@ -152,6 +155,7 @@ DEFAULT_KNOWLEDGE: dict[str, dict] = {
                 "consequence": "价格差距大，客户觉得不专业而流失",
             },
         ],
+        "sales_process": ["确认需求", "确认材质工艺", "报价", "促进成交"],
     },
 }
 
@@ -183,7 +187,7 @@ def init_db():
                 db.flush()
             # 写入示例知识（如果没有）
             if not get_latest_knowledge(db, cat.id):
-                k = Knowledge(category_id=cat.id, version=1)
+                k = Knowledge(category_id=cat.id, version=1, prompt_version=PROMPT_VERSION)
                 k.set_content(DEFAULT_KNOWLEDGE[name])
                 k.set_source_ids([])
                 db.add(k)
@@ -581,6 +585,7 @@ def admin_get_session(
         status=s.status,
         started_at=s.started_at,
         ended_at=s.ended_at,
+        conversation_summary=s.conversation_summary or "",
         messages=[
             MessageOut.model_validate(m, from_attributes=True) for m in s.messages
         ],
@@ -676,10 +681,15 @@ def send_message(
     history = list(s.messages)  # 含刚加的 agent_msg
     turn_count = sum(1 for m in history if m.role == "agent")
 
+    # 长对话摘要：压缩传给 LLM 的上下文（超过阈值时生效）
+    summary = _compute_summary(s, cat.name if cat else "")
+    s.conversation_summary = summary
+
     # 生成 AI 客户回复
     raw = generate_customer_reply(
         knowledge, history=history, category_name=cat.name,
         turn_count=turn_count, max_turns=settings.max_dialogue_turns,
+        conversation_summary=summary,
     )
 
     customer_msg = None
@@ -754,6 +764,10 @@ def stream_message(
     history = list(s.messages)  # 含刚加的 agent_msg
     turn_count = sum(1 for m in history if m.role == "agent")
 
+    # 长对话摘要：压缩传给 LLM 的上下文（超过阈值时生效）
+    summary = _compute_summary(s, cat.name if cat else "")
+    s.conversation_summary = summary
+
     # 提交客服消息，后续 generator 用独立 session
     db.commit()
     db.refresh(agent_msg)
@@ -770,6 +784,7 @@ def stream_message(
             turn_count=turn_count,
             max_turns=settings.max_dialogue_turns,
             knowledge_id=knowledge_id,
+            conversation_summary=summary,
         ):
             if chunk == "[DONE]":
                 break
@@ -835,7 +850,9 @@ def finish_session(
         )
 
     knowledge = get_knowledge_for_training(db, s.category_id)
-    result = evaluate_session(s.messages, knowledge, cat.name)
+    result = evaluate_session(
+        s.messages, knowledge, cat.name, conversation_summary=s.conversation_summary or ""
+    )
 
     score = Score(session_id=s.id, total_score=result["score"], summary=result["summary"])
     score.set_lists(result["advantages"], result["mistakes"], result["suggestions"])
@@ -885,6 +902,7 @@ def _categories_with_count(db: Session) -> list[CategoryOut]:
 def _knowledge_out(k: Knowledge) -> KnowledgeOut:
     return KnowledgeOut(
         id=k.id, category_id=k.category_id, version=k.version,
+        prompt_version=k.prompt_version,
         content=k.get_content(), source_material_ids=k.get_source_ids(),
         created_at=k.created_at,
     )
@@ -924,3 +942,16 @@ def _clean_reply(raw: str) -> str:
         return ""
     text = raw.replace(END_MARKER, "").strip()
     return text
+
+
+def _compute_summary(session, category_name: str) -> str:
+    """长对话时生成/增量更新历史摘要，供后续生成与最终评分压缩 LLM 上下文。
+
+    仅当配置了 LLM 且消息数超过 SUMMARY_THRESHOLD 才调用；否则沿用已有摘要。
+    """
+    if not llm.is_llm_enabled():
+        return session.conversation_summary or ""
+    msgs = list(session.messages)
+    if len(msgs) <= SUMMARY_THRESHOLD:
+        return session.conversation_summary or ""
+    return summarize_older(msgs, session.conversation_summary or "", category_name)

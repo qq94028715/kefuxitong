@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     # 训练相关
     max_dialogue_turns: int = 20  # 单次训练最大对话轮数（防止无限聊）
     min_dialogue_turns: int = 4  # 至少聊几轮才允许结束评分
+    stream_delay: float = 0.03  # 逐字流式速度（秒/字符），可用 .env 覆盖，免重新部署
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

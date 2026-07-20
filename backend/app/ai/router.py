@@ -15,16 +15,14 @@ import logging
 import time
 from typing import Generator
 
+from ..config import settings
 from . import llm, cache
 from .intent import classify, INTENT_OTHER, INTENT_START, get_intent_label
 from .prompt import load_prompt
 from .quick_reply import get_reply
-from .simulator import build_history_text, get_personality
+from .simulator import build_history_for_llm, get_personality
 
 logger = logging.getLogger(__name__)
-
-# 逐字模拟速度（秒/字符），让 Quick/Cache 回复也有打字感
-STREAM_DELAY = 0.03  # 30ms/字 ≈ 30字/秒 的阅读速度
 
 
 def generate_reply_stream(
@@ -34,6 +32,7 @@ def generate_reply_stream(
     turn_count: int,
     max_turns: int,
     knowledge_id: int,
+    conversation_summary: str = "",
 ) -> Generator[str, None, None]:
     """流式生成客户回复（生成器）。
 
@@ -87,7 +86,7 @@ def generate_reply_stream(
         return
 
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
-    history_text = build_history_text(history)
+    history_text = build_history_for_llm(history, conversation_summary)
     personality = get_personality(history)
     p = load_prompt(
         "customer",
@@ -141,4 +140,4 @@ def _simulated_stream(text: str) -> Generator[str, None, None]:
     """模拟流式输出（逐字产出），给 Quick/Cache 回复加打字动画。"""
     for char in text:
         yield char
-        time.sleep(STREAM_DELAY)
+        time.sleep(settings.stream_delay)

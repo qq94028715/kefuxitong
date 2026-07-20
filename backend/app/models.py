@@ -111,6 +111,7 @@ class Knowledge(Base):
     )
     content_json = Column(Text, nullable=False, default="{}")
     version = Column(Integer, default=1)  # 每次重新提取自增
+    prompt_version = Column(String(32), default="v1.0")  # 生成该知识库所用的 prompt 版本
     source_material_ids = Column(Text, default="[]")  # 提取自哪些材料
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -140,6 +141,7 @@ class ChatSession(Base):
     status = Column(String(16), default="in_progress")  # in_progress / completed
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
+    conversation_summary = Column(Text, default="")  # 长对话的 AI 历史摘要（压缩 LLM 上下文）
 
     messages = relationship(
         "ChatMessage",

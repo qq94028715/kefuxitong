@@ -53,6 +53,9 @@
   "key_knowledge": [
     "其他客服必须掌握的核心知识点（从产品知识/培训教材中提炼），如：耐温范围、防水等级、户外适用性"
   ],
+  "sales_process": [
+    "该品类的标准销售流程阶段（从 SOP/培训教材中提炼），如：确认需求、推荐方案、报价、促进成交"
+  ],
   "success_patterns": [
     {
       "scenario": "成功场景（从优秀案例提炼）",
@@ -72,8 +75,8 @@
 【注意事项】
 1. 不同资料类型贡献不同字段：
    - 产品知识 → product_specs, key_knowledge
-   - SOP → required_questions（客服必须确认的事项）
-   - 培训教材 → product_summary, key_knowledge
+   - SOP → required_questions（客服必须确认的事项）, sales_process（标准销售流程）
+   - 培训教材 → product_summary, key_knowledge, sales_process
    - FAQ → recommended_responses
    - 优秀案例 → success_patterns
    - 失败案例 → failure_patterns

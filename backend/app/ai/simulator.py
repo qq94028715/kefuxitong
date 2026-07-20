@@ -27,6 +27,10 @@ CUSTOMER_PERSONALITIES = [
     "你性格随和，比较好说话，但也容易被带偏，需要客服引导才能说清需求。",
 ]
 
+# 长对话自动摘要阈值：超过该消息数后，早期内容用 AI 摘要替代，只保留最近 N 条
+SUMMARY_THRESHOLD = 20
+RECENT_KEEP = 8
+
 
 def get_personality(history: list) -> str:
     """根据对话历史确定性选择客户性格。
@@ -56,21 +60,67 @@ def build_history_text(messages: list) -> str:
     return "\n".join(lines)
 
 
+def build_history_for_llm(messages: list, summary: str = "") -> str:
+    """生成传给 LLM 的历史文本。
+
+    短对话直接全量；长对话（>SUMMARY_THRESHOLD）用 AI 摘要替代早期内容、
+    只保留最近 RECENT_KEEP 条，既保留上下文又压住 token 用量。
+    """
+    if not messages:
+        return "（对话尚未开始）"
+    if summary and len(messages) > SUMMARY_THRESHOLD:
+        recent = messages[-RECENT_KEEP:]
+        recent_text = build_history_text(recent)
+        return f"[对话历史摘要]\n{summary}\n\n[最近 {len(recent)} 条对话]\n{recent_text}"
+    return build_history_text(messages)
+
+
+def summarize_older(messages: list, prev_summary: str, category_name: str) -> str:
+    """把早期对话（除最近 RECENT_KEEP 条外）浓缩为要点摘要。
+
+    未配置 LLM 时直接返回原摘要（不摘要）。失败时也回退到原摘要，保证不崩。
+    """
+    if not llm.is_llm_enabled():
+        return prev_summary
+    older = messages[:-RECENT_KEEP] if len(messages) > RECENT_KEEP else messages
+    older_text = build_history_text(older)
+    prompt_text = (
+        "你是对话记录整理助手。请把以下客服与客户的对话浓缩成简洁要点，"
+        "包含：客户核心需求、关注点、异议、已确认信息、待跟进事项。不超过 200 字。\n"
+        f"品类：{category_name}\n"
+        f"已有摘要：{prev_summary or '无'}\n\n"
+        f"待整理对话：\n{older_text}"
+    )
+    try:
+        result = llm.chat(
+            [{"role": "user", "content": prompt_text}],
+            temperature=0.2,
+            max_tokens=300,
+        )
+        return (result or prev_summary).strip()
+    except Exception as e:
+        logger.warning("对话摘要生成失败，沿用旧摘要: %s", e)
+        return prev_summary
+
+
 def generate_customer_reply(
     knowledge: dict,
     history: list,
     category_name: str,
     turn_count: int,
     max_turns: int,
+    conversation_summary: str = "",
 ) -> str:
     """生成 AI 客户的下一句话。
 
     turn_count: 已完成的对话轮数（客服已回答的次数）
+    conversation_summary: 长对话的 AI 历史摘要（用于压缩传给 LLM 的上下文）
     返回 END_MARKER 表示客户主动结束对话。
     """
     if llm.is_llm_enabled():
         reply = _reply_with_llm(
-            knowledge, history, category_name, turn_count, max_turns
+            knowledge, history, category_name, turn_count, max_turns,
+            conversation_summary=conversation_summary,
         )
         if reply:
             reply = reply.strip().strip('"').strip("'")
@@ -89,9 +139,10 @@ def _reply_with_llm(
     category_name: str,
     turn_count: int,
     max_turns: int,
+    conversation_summary: str = "",
 ) -> str | None:
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
-    history_text = build_history_text(history)
+    history_text = build_history_for_llm(history, conversation_summary)
     personality = get_personality(history)
     p = prompt.load_prompt(
         "customer",
