@@ -57,12 +57,19 @@ class Category(Base):
 
 
 class Material(Base):
-    """管理员上传的原始材料文件。content_text 为提取的纯文本，供 AI 处理。
+    """管理员上传的原始材料文件。content_text 为解析后的纯文本，供 AI 处理。
 
-    quality 标注案例类型：
-    - excellent: 优秀成交案例（客服做得好，成功促成交易）
-    - normal:    普通案例（一般对话）
-    - failed:    失败/丢单案例（客服失误导致丢单）
+    quality 标注案例质量（仅对 sales 类型有意义）：
+    - excellent: 优秀成交案例
+    - normal:    普通案例
+    - failed:    失败/丢单案例
+
+    source_type 标注资料类型（决定 AI 学习方式）：
+    - product:  产品知识（规格/参数/材质说明）
+    - sales:    销售案例（聊天记录/成交/丢单）
+    - sop:      SOP标准操作流程
+    - training: 培训教材
+    - faq:      常见问题
     """
 
     __tablename__ = "materials"
@@ -73,10 +80,11 @@ class Material(Base):
     )
     filename = Column(String(255), nullable=False)  # 原始文件名
     file_path = Column(String(512), nullable=False)  # 服务器存储路径
-    content_text = Column(Text, default="")  # 提取的纯文本
-    file_type = Column(String(16), default="txt")  # txt / md
+    content_text = Column(Text, default="")  # 解析后的纯文本
+    file_type = Column(String(16), default="txt")  # txt/md/docx/pptx/pdf/xlsx
     file_size = Column(Integer, default=0)  # 字节数
-    quality = Column(String(16), default="normal")  # excellent / normal / failed
+    quality = Column(String(16), default="normal")  # excellent/normal/failed
+    source_type = Column(String(16), default="sales")  # product/sales/sop/training/faq
     created_at = Column(DateTime, default=datetime.utcnow)
 
     category = relationship("Category", back_populates="materials")

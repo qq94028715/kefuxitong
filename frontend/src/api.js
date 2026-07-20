@@ -43,10 +43,11 @@ export const deleteCategory = (id) => http.delete(`/admin/categories/${id}`)
 export const listMaterials = (categoryId) =>
   http.get('/admin/materials', { params: { category_id: categoryId } })
 
-export const uploadMaterial = (categoryId, file, quality = 'normal') => {
+export const uploadMaterial = (categoryId, file, quality = 'normal', sourceType = 'sales') => {
   const form = new FormData()
   form.append('category_id', categoryId)
   form.append('quality', quality)
+  form.append('source_type', sourceType)
   form.append('file', file)
   return http.post('/admin/materials/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },

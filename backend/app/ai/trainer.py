@@ -109,3 +109,28 @@ def build_training_text_by_quality(
         result[quality] = (text, [m.id for m in subset])
 
     return result
+
+
+def build_training_text_by_source(
+    db: Session, category_id: int
+) -> dict[str, tuple[str, list[int]]]:
+    """按资料类型分别加载材料并处理。
+
+    返回 {source_type: (text, material_ids)} 字典。
+    source_type 为 product / sales / sop / training / faq，只包含有材料的类型。
+    """
+    materials = load_all_materials(db, category_id)
+    if not materials:
+        return {}
+
+    result: dict[str, tuple[str, list[int]]] = {}
+    for source_type in ("product", "sales", "sop", "training", "faq"):
+        subset = [m for m in materials if (m.source_type or "sales") == source_type]
+        if not subset:
+            continue
+        raw = materials_to_text(subset)
+        chunks = deduplicate(split_chunks(raw))
+        text = "\n\n".join(chunks)
+        result[source_type] = (text, [m.id for m in subset])
+
+    return result

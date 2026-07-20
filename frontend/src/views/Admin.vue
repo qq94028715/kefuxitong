@@ -93,20 +93,33 @@
             <!-- 上传 -->
             <div class="card" style="background: var(--bg); margin-bottom: 16px">
               <div class="field">
-                <label>上传材料文件</label>
-                <input type="file" class="input" @change="onFileChange" accept=".txt,.md,.json" />
+                <label>上传资料文件</label>
+                <input type="file" class="input" @change="onFileChange" accept=".txt,.md,.json,.docx,.pptx,.pdf,.xlsx" />
+                <div class="muted" style="font-size:12px;margin-top:4px">支持 TXT / MD / DOCX / PPTX / PDF / XLSX</div>
               </div>
-              <div class="field">
-                <label>案例类型</label>
-                <select class="input" v-model="uploadQuality">
-                  <option value="normal">普通案例</option>
-                  <option value="excellent">优秀成交案例</option>
-                  <option value="failed">失败丢单案例</option>
-                </select>
+              <div class="row">
+                <div class="field" style="flex:1">
+                  <label>资料类型</label>
+                  <select class="input" v-model="uploadSourceType">
+                    <option value="sales">销售案例</option>
+                    <option value="product">产品知识</option>
+                    <option value="sop">SOP流程</option>
+                    <option value="training">培训教材</option>
+                    <option value="faq">FAQ</option>
+                  </select>
+                </div>
+                <div class="field" style="flex:1" v-if="uploadSourceType === 'sales'">
+                  <label>案例质量</label>
+                  <select class="input" v-model="uploadQuality">
+                    <option value="normal">普通</option>
+                    <option value="excellent">优秀成交</option>
+                    <option value="failed">失败丢单</option>
+                  </select>
+                </div>
               </div>
               <div class="row">
                 <button class="btn" :disabled="!selectedFile || uploading" @click="onUpload">
-                  {{ uploading ? '上传中...' : '上传材料' }}
+                  {{ uploading ? '上传解析中...' : '上传资料' }}
                 </button>
                 <button class="btn ghost" :disabled="extracting" @click="onExtract">
                   {{ extracting ? 'AI 提取中（请等待）...' : '重新提取知识库' }}
@@ -119,13 +132,14 @@
             <div class="page-sub" style="margin-top:8px">已上传材料</div>
             <table v-if="materials.length">
               <thead>
-                <tr><th>文件名</th><th>类型</th><th>案例</th><th>大小</th><th>上传时间</th><th>操作</th></tr>
+                <tr><th>文件名</th><th>格式</th><th>资料类型</th><th>案例</th><th>大小</th><th>上传时间</th><th>操作</th></tr>
               </thead>
               <tbody>
                 <tr v-for="m in materials" :key="m.id">
                   <td>{{ m.filename }}</td>
-                  <td><span class="tag">{{ m.file_type }}</span></td>
-                  <td><span class="tag" :class="qualityTagClass(m.quality)">{{ qualityLabel(m.quality) }}</span></td>
+                  <td><span class="tag gray">{{ m.file_type }}</span></td>
+                  <td><span class="tag" :class="sourceTypeTagClass(m.source_type)">{{ sourceTypeLabel(m.source_type) }}</span></td>
+                  <td><span v-if="m.source_type === 'sales'" class="tag" :class="qualityTagClass(m.quality)">{{ qualityLabel(m.quality) }}</span><span v-else class="muted">-</span></td>
                   <td class="muted">{{ humanSize(m.file_size) }}</td>
                   <td>{{ fmt(m.created_at) }}</td>
                   <td>
@@ -218,11 +232,21 @@
                   <input class="input" v-model="editFilename" />
                 </div>
                 <div class="field">
-                  <label>案例类型</label>
+                  <label>资料类型</label>
+                  <select class="input" v-model="editSourceType">
+                    <option value="sales">销售案例</option>
+                    <option value="product">产品知识</option>
+                    <option value="sop">SOP流程</option>
+                    <option value="training">培训教材</option>
+                    <option value="faq">FAQ</option>
+                  </select>
+                </div>
+                <div v-if="editSourceType === 'sales'" class="field">
+                  <label>案例质量</label>
                   <select class="input" v-model="editQuality">
-                    <option value="normal">普通案例</option>
-                    <option value="excellent">优秀成交案例</option>
-                    <option value="failed">失败丢单案例</option>
+                    <option value="normal">普通</option>
+                    <option value="excellent">优秀成交</option>
+                    <option value="failed">失败丢单</option>
                   </select>
                 </div>
                 <div class="field">
@@ -404,6 +428,7 @@ const knowledge = ref(null)
 const selectedFile = ref(null)
 const uploading = ref(false)
 const uploadQuality = ref('normal')
+const uploadSourceType = ref('sales')
 const extracting = ref(false)
 const extractMsg = ref('')
 
@@ -412,6 +437,7 @@ const editingMaterial = ref(null)
 const editContent = ref('')
 const editFilename = ref('')
 const editQuality = ref('normal')
+const editSourceType = ref('sales')
 const editSaving = ref(false)
 
 // 训练成绩
@@ -442,6 +468,16 @@ function qualityTagClass(q) {
   if (q === 'excellent') return 'ok'
   if (q === 'failed') return 'warn'
   return 'gray'
+}
+function sourceTypeLabel(s) {
+  const map = { product: '产品知识', sales: '销售案例', sop: 'SOP', training: '培训教材', faq: 'FAQ' }
+  return map[s] || '销售案例'
+}
+function sourceTypeTagClass(s) {
+  if (s === 'product') return 'ok'
+  if (s === 'sop') return 'warn'
+  if (s === 'faq') return 'gray'
+  return ''
 }
 function logout() {
   localStorage.clear()
@@ -501,9 +537,10 @@ async function onUpload() {
   if (!selectedFile.value || !matCatId.value) return
   uploading.value = true
   try {
-    await uploadMaterial(matCatId.value, selectedFile.value, uploadQuality.value)
+    await uploadMaterial(matCatId.value, selectedFile.value, uploadQuality.value, uploadSourceType.value)
     selectedFile.value = null
     uploadQuality.value = 'normal'
+    uploadSourceType.value = 'sales'
     await loadMaterials()
     await loadCats()
   } catch (e) {
@@ -543,6 +580,7 @@ async function onEditMaterial(m) {
     editContent.value = data.content_text || ''
     editFilename.value = data.filename || ''
     editQuality.value = data.quality || 'normal'
+    editSourceType.value = data.source_type || 'sales'
   } catch (e) {
     alert(e.response?.data?.detail || '加载材料失败')
   }
@@ -552,6 +590,7 @@ function onCancelEdit() {
   editContent.value = ''
   editFilename.value = ''
   editQuality.value = 'normal'
+  editSourceType.value = 'sales'
 }
 async function onSaveEdit() {
   if (!editingMaterial.value) return
@@ -561,6 +600,7 @@ async function onSaveEdit() {
       filename: editFilename.value || undefined,
       content_text: editContent.value,
       quality: editQuality.value,
+      source_type: editSourceType.value,
     })
     editingMaterial.value = null
     await loadMaterials()

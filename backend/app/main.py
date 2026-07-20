@@ -18,6 +18,7 @@ from starlette.responses import StreamingResponse
 
 from .ai import cache as reply_cache
 from .ai.evaluator import evaluate_session
+from .ai.parser import parse_file, SUPPORTED_EXTENSIONS
 from .ai.knowledge import (
     extract_knowledge,
     get_knowledge_for_training,
@@ -318,6 +319,7 @@ def list_materials(
 @app.post("/api/admin/materials/upload", response_model=MaterialOut)
 async def upload_material(
     category_id: int = Form(...),
+    source_type: str = Form("sales"),
     quality: str = Form("normal"),
     file: UploadFile = File(...),
     _: User = Depends(require_admin),
@@ -327,6 +329,14 @@ async def upload_material(
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
 
+    # 资料类型校验
+    ALLOWED_SOURCE_TYPES = {"product", "sales", "sop", "training", "faq"}
+    if source_type not in ALLOWED_SOURCE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"资料类型无效，仅支持 {', '.join(sorted(ALLOWED_SOURCE_TYPES))}",
+        )
+
     # 案例类型校验
     ALLOWED_QUALITY = {"excellent", "normal", "failed"}
     if quality not in ALLOWED_QUALITY:
@@ -335,29 +345,22 @@ async def upload_material(
             detail=f"案例类型无效，仅支持 {', '.join(sorted(ALLOWED_QUALITY))}",
         )
 
-    # 文件大小限制（5MB）
-    MAX_FILE_SIZE = 5 * 1024 * 1024
+    # 文件大小限制（10MB，PPT/PDF 可能较大）
+    MAX_FILE_SIZE = 10 * 1024 * 1024
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="文件过大，限制 5MB 以内")
+        raise HTTPException(status_code=400, detail="文件过大，限制 10MB 以内")
 
     # 扩展名白名单校验
     raw_name = file.filename or "untitled.txt"
     filename = Path(raw_name).name  # 剥掉路径，防穿越
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
-    ALLOWED_EXTS = {"txt", "md", "json"}
-    if ext not in ALLOWED_EXTS:
+    if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件类型：.{ext}，仅支持 {', '.join(sorted(ALLOWED_EXTS))}",
+            detail=f"不支持的文件类型：.{ext}，仅支持 {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
         )
     file_type = ext
-
-    # 尝试 utf-8，失败用 gbk（Windows 中文常见）
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        text = content.decode("gbk", errors="ignore")
 
     safe_name = f"{category_id}_{uuid.uuid4().hex[:8]}_{filename}"
     save_path = UPLOAD_DIR / safe_name
@@ -368,6 +371,13 @@ async def upload_material(
         raise HTTPException(status_code=400, detail="非法的文件路径")
     save_path.write_bytes(content)
 
+    # 多格式解析：统一转为纯文本
+    try:
+        text = parse_file(save_path, file_type)
+    except ValueError as e:
+        save_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
     m = Material(
         category_id=category_id,
         filename=filename,
@@ -376,6 +386,7 @@ async def upload_material(
         file_type=file_type,
         file_size=len(content),
         quality=quality,
+        source_type=source_type,
     )
     db.add(m)
     db.commit()
@@ -433,6 +444,15 @@ def update_material(
                 detail=f"案例类型无效，仅支持 {', '.join(sorted(ALLOWED_QUALITY))}",
             )
         m.quality = req.quality
+
+    if req.source_type is not None:
+        ALLOWED_SOURCE_TYPES = {"product", "sales", "sop", "training", "faq"}
+        if req.source_type not in ALLOWED_SOURCE_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"资料类型无效，仅支持 {', '.join(sorted(ALLOWED_SOURCE_TYPES))}",
+            )
+        m.source_type = req.source_type
 
     if req.content_text is not None:
         m.content_text = req.content_text
