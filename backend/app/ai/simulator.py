@@ -144,6 +144,7 @@ def _reply_with_llm(
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
     history_text = build_history_for_llm(history, conversation_summary)
     personality = get_personality(history)
+    profiles_section = _build_customer_profiles_section(knowledge)
     p = prompt.load_prompt(
         "customer",
         knowledge_json=knowledge_json,
@@ -152,6 +153,7 @@ def _reply_with_llm(
         turn_count=turn_count,
         max_turns=max_turns,
         customer_personality=personality,
+        customer_profiles_section=profiles_section,
     )
     messages = [
         {
@@ -161,6 +163,38 @@ def _reply_with_llm(
         {"role": "user", "content": p},
     ]
     return llm.chat(messages, temperature=0.8, max_tokens=200)
+
+
+def _build_customer_profiles_section(knowledge: dict) -> str:
+    """从 knowledge 的 customer_profiles 字段构造画像注入文本。
+
+    knowledge 含 customer_profiles 数组时渲染为一段引导文本；
+    否则返回空串，不影响现有使用默认性格的品类。
+    """
+    profiles = knowledge.get("customer_profiles") or []
+    if not profiles:
+        return ""
+    parts = ["你可以从以下客户类型中选择一种进行模拟："]
+    for p in profiles:
+        if isinstance(p, dict):
+            name = p.get("name", "")
+            role = p.get("role", "")
+            traits = p.get("traits", "")
+            first_style = p.get("first_message_style", "")
+            test_focus = p.get("test_focus", "")
+            line = f"- {name}"
+            if role:
+                line += f"（{role}）"
+            line += f"：{traits}"
+            if first_style:
+                line += f"。典型第一句话风格：{first_style}"
+            if test_focus:
+                line += f"。重点测试：{test_focus}"
+            parts.append(line)
+        elif isinstance(p, str):
+            parts.append(f"- {p}")
+    parts.append("根据你选择的类型，调整你的说话方式和关注点，保持角色一致性。")
+    return "\n".join(parts)
 
 
 # ---------- 规则 fallback ----------

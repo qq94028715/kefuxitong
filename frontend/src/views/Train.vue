@@ -153,10 +153,10 @@ const scoreLevel = computed(() => {
 
 // 四维评分配置
 const dimensions = [
-  { key: '需求确认', label: '需求确认', max: 40 },
-  { key: '产品知识', label: '产品知识', max: 20 },
-  { key: '销售技巧', label: '销售技巧', max: 20 },
-  { key: '成交推进', label: '成交推进', max: 20 },
+  { key: '需求确认', label: '需求确认', max: 30 },
+  { key: '产品专业', label: '产品专业', max: 25 },
+  { key: '报价能力', label: '报价能力', max: 25 },
+  { key: '风险控制', label: '风险控制', max: 20 },
 ]
 function dimPercent(key) {
   const val = score.value?.dimension_scores?.[key] || 0

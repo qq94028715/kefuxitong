@@ -218,6 +218,7 @@ def _extract_with_rules(text: str, category_name: str) -> dict:
         "success_patterns": [],
         "failure_patterns": [],
         "sales_process": list(DEFAULT_SALES_PROCESS),
+        "customer_profiles": [],
         "_note": "规则模式提取（未配置 LLM_API_KEY），质量有限。"
         "配置后重新提取可获得完整知识库（含成功/失败模式）。",
     }

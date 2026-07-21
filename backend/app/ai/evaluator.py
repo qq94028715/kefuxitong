@@ -3,11 +3,11 @@
 对话结束后，用 LLM 扮演客服主管，对整段对话结构化评分。
 输出：{score, dimension_scores, advantages, mistakes, suggestions, summary}，存入 score 表。
 
-四维评分（用户指定权重）：
-- 需求确认 40 分
-- 产品知识 20 分
-- 销售技巧 20 分
-- 成交推进 20 分
+四维评分（v1.1 调整权重）：
+- 需求确认 30 分
+- 产品专业 25 分
+- 报价能力 25 分
+- 风险控制 20 分
 
 LLM 模式：用 score.txt prompt，四维评分。
 规则模式：基于关键词命中度评分（检查客服是否提到必要信息）。
@@ -17,12 +17,12 @@ import json
 from . import llm, prompt
 from .simulator import SUMMARY_THRESHOLD, RECENT_KEEP
 
-# 四维评分维度及其满分
+# 四维评分维度及其满分（v1.1: 用户调整权重，更侧重产品专业度和报价能力）
 DIMENSIONS = {
-    "需求确认": 40,
-    "产品知识": 20,
-    "销售技巧": 20,
-    "成交推进": 20,
+    "需求确认": 30,
+    "产品专业": 25,
+    "报价能力": 25,
+    "风险控制": 20,
 }
 
 
@@ -160,10 +160,10 @@ def _evaluate_with_rules(
 
     检查客服回答中是否提到了 required_questions 中的各项。
     四维分数按命中情况分配：
-    - 需求确认（40分）：按 required_questions 命中比例
-    - 产品知识（20分）：是否提到产品规格/工艺关键词
-    - 销售技巧（20分）：是否有礼貌用语/确认语句
-    - 成交推进（20分）：是否提到报价/交期/下单
+    - 需求确认（30分）：按 required_questions 命中比例
+    - 产品专业（25分）：是否提到产品规格/工艺关键词
+    - 报价能力（25分）：是否有报价相关表述
+    - 风险控制（20分）：是否提到风险/限制/注意事项
     """
     required = knowledge.get("required_questions") or [
         "尺寸", "数量", "材质", "用途",
@@ -173,31 +173,32 @@ def _evaluate_with_rules(
     hit = [r for r in required if r in agent_text]
     miss = [r for r in required if r not in agent_text]
 
-    # 需求确认：按命中比例
+    # 需求确认：按命中比例（30分）
     hit_ratio = len(hit) / len(required) if required else 0
-    dim_confirm = round(40 * hit_ratio, 1)
+    dim_confirm = round(30 * hit_ratio, 1)
 
-    # 产品知识：检查规格/工艺关键词
+    # 产品专业：检查规格/工艺关键词（25分）
     spec_keywords = ["mm", "厚度", "材质", "工艺", "PVC", "CPVC", "不锈钢", "铝",
-                     "腐蚀", "丝印", "UV", "覆膜", "雕刻", "冲压"]
+                     "腐蚀", "丝印", "UV", "覆膜", "雕刻", "冲压", "激光", "304", "201"]
     spec_hits = sum(1 for k in spec_keywords if k in agent_text)
-    dim_knowledge = round(min(20, spec_hits * 5), 1)
+    dim_knowledge = round(min(25, spec_hits * 5), 1)
 
-    # 销售技巧：检查礼貌/确认用语
-    skill_keywords = ["您好", "请问", "好的", "没问题", "可以", "建议", "推荐"]
-    skill_hits = sum(1 for k in skill_keywords if k in agent_text)
-    dim_skill = round(min(20, skill_hits * 5), 1)
+    # 报价能力：检查报价/计算/价格合理性表述（25分）
+    price_keywords = ["报价", "价格", "单价", "总价", "材料成本", "利润", "成本", "元"]
+    price_hits = sum(1 for k in price_keywords if k in agent_text)
+    dim_price = round(min(25, price_hits * 5), 1)
 
-    # 成交推进：检查成交关键词
-    deal_keywords = ["报价", "交期", "下单", "定金", "发货", "联系", "微信", "样品"]
-    deal_hits = sum(1 for k in deal_keywords if k in agent_text)
-    dim_deal = round(min(20, deal_hits * 5), 1)
+    # 风险控制：检查风险提醒和注意事项（20分）
+    risk_keywords = ["交期", "发货", "风险", "注意", "限制", "不能", "不建议", "建议",
+                     "可能", "避免", "售后"]
+    risk_hits = sum(1 for k in risk_keywords if k in agent_text)
+    dim_risk = round(min(20, risk_hits * 4), 1)
 
     dimension_scores = {
         "需求确认": dim_confirm,
-        "产品知识": dim_knowledge,
-        "销售技巧": dim_skill,
-        "成交推进": dim_deal,
+        "产品专业": dim_knowledge,
+        "报价能力": dim_price,
+        "风险控制": dim_risk,
     }
     score = round(sum(dimension_scores.values()), 1)
 

@@ -180,7 +180,7 @@ class Score(Base):
         Integer, ForeignKey("chat_session.id"), nullable=False, unique=True, index=True
     )
     total_score = Column(Float, default=0.0)  # 0~100
-    dimension_scores = Column(Text, default="{}")  # JSON: {"需求确认":35,"产品知识":15,...}
+    dimension_scores = Column(Text, default="{}")  # JSON: {"需求确认":25,"产品专业":20,...}
     advantages = Column(Text, default="[]")  # JSON 数组
     mistakes = Column(Text, default="[]")  # JSON 数组
     suggestions = Column(Text, default="[]")  # JSON 数组
