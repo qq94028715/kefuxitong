@@ -801,13 +801,19 @@ function disposeTrendChart() {
   }
 }
 
-// 四维评分配置
-const dimConfig = [
-  { key: '需求确认', label: '需求确认', max: 30 },
-  { key: '产品专业', label: '产品专业', max: 25 },
-  { key: '报价能力', label: '报价能力', max: 25 },
-  { key: '风险控制', label: '风险控制', max: 20 },
-]
+// 评分维度（从评分详情动态读取）
+const dimConfig = computed(() => {
+  const dims = scoreDetail.value?.score?.scoring_dimensions
+  if (dims && Object.keys(dims).length) {
+    return Object.entries(dims).map(([key, max]) => ({ key, label: key, max }))
+  }
+  return [
+    { key: '需求确认', label: '需求确认', max: 30 },
+    { key: '产品专业', label: '产品专业', max: 25 },
+    { key: '报价能力', label: '报价能力', max: 25 },
+    { key: '风险控制', label: '风险控制', max: 20 },
+  ]
+})
 function adminDimPercent(key) {
   const val = scoreDetail.value?.score?.dimension_scores?.[key] || 0
   const max = dimConfig.find(d => d.key === key)?.max || 20

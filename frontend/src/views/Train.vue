@@ -151,13 +151,20 @@ const scoreLevel = computed(() => {
   return 'low'
 })
 
-// 四维评分配置
-const dimensions = [
-  { key: '需求确认', label: '需求确认', max: 30 },
-  { key: '产品专业', label: '产品专业', max: 25 },
-  { key: '报价能力', label: '报价能力', max: 25 },
-  { key: '风险控制', label: '风险控制', max: 20 },
-]
+// 评分维度（从 score.scoring_dimensions 动态读取）
+const dimensions = computed(() => {
+  const dims = score.value?.scoring_dimensions
+  if (dims && Object.keys(dims).length) {
+    return Object.entries(dims).map(([key, max]) => ({ key, label: key, max }))
+  }
+  // 兜底默认
+  return [
+    { key: '需求确认', label: '需求确认', max: 30 },
+    { key: '产品专业', label: '产品专业', max: 25 },
+    { key: '报价能力', label: '报价能力', max: 25 },
+    { key: '风险控制', label: '风险控制', max: 20 },
+  ]
+})
 function dimPercent(key) {
   const val = score.value?.dimension_scores?.[key] || 0
   const max = dimensions.find(d => d.key === key)?.max || 20

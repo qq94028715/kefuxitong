@@ -181,6 +181,7 @@ class Score(Base):
     )
     total_score = Column(Float, default=0.0)  # 0~100
     dimension_scores = Column(Text, default="{}")  # JSON: {"需求确认":25,"产品专业":20,...}
+    scoring_dimensions = Column(Text, default="{}")  # JSON: {"需求确认":30,...} 各维度满分
     advantages = Column(Text, default="[]")  # JSON 数组
     mistakes = Column(Text, default="[]")  # JSON 数组
     suggestions = Column(Text, default="[]")  # JSON 数组
@@ -200,6 +201,15 @@ class Score(Base):
 
     def get_dimension_scores(self) -> dict:
         return json.loads(self.dimension_scores or "{}")
+
+    def set_dimension_scores(self, scores: dict) -> None:
+        self.dimension_scores = json.dumps(scores, ensure_ascii=False)
+
+    def get_scoring_dimensions(self) -> dict:
+        return json.loads(self.scoring_dimensions or "{}")
+
+    def set_scoring_dimensions(self, dims: dict) -> None:
+        self.scoring_dimensions = json.dumps(dims, ensure_ascii=False)
 
     def set_lists(
         self,

@@ -41,6 +41,14 @@ PROMPT_VERSION = "v1.0"
 # 标准销售流程默认阶段（规则模式 / 无流程资料时的兜底）
 DEFAULT_SALES_PROCESS = ["确认需求", "推荐方案", "报价", "促进成交"]
 
+# 默认评分维度（规则模式 / 无资料时的兜底）
+DEFAULT_SCORING_DIMENSIONS = {
+    "需求确认": 30,
+    "产品专业": 25,
+    "报价能力": 25,
+    "风险控制": 20,
+}
+
 
 def get_latest_knowledge(db: Session, category_id: int) -> Knowledge | None:
     """获取某分类最新版知识。"""
@@ -219,6 +227,7 @@ def _extract_with_rules(text: str, category_name: str) -> dict:
         "failure_patterns": [],
         "sales_process": list(DEFAULT_SALES_PROCESS),
         "customer_profiles": [],
+        "scoring_dimensions": dict(DEFAULT_SCORING_DIMENSIONS),
         "_note": "规则模式提取（未配置 LLM_API_KEY），质量有限。"
         "配置后重新提取可获得完整知识库（含成功/失败模式）。",
     }

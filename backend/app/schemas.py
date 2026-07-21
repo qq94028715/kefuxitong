@@ -131,7 +131,8 @@ class ScoreOut(BaseModel):
     id: int
     session_id: int
     total_score: float
-    dimension_scores: dict = {}  # 四维分数 {"需求确认":25,"产品专业":20,...}
+    dimension_scores: dict = {}  # 各维度得分 {"需求确认":25,"产品专业":20,...}
+    scoring_dimensions: dict = {}  # 各维度满分 {"需求确认":30,...} 前端渲染用
     advantages: list[str]
     mistakes: list[str]
     suggestions: list[str]
