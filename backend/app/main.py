@@ -53,6 +53,8 @@ from .schemas import (
     AdminSessionListItem,
     CategoryCreate,
     CategoryOut,
+    ChatImportReply,
+    ChatImportRequest,
     ExtractKnowledgeReply,
     ExtractKnowledgeRequest,
     FinishReply,
@@ -511,6 +513,218 @@ def extract(
         version=k.version,
         used_llm=used_llm,
         message=msg,
+    )
+
+
+# ---------- 聊天语料导入 ----------
+
+# 清洗规则：要跳过的消息模式
+_SKIP_PATTERNS = [
+    "欢迎您光临本店",
+    "将为您服务",
+    "当前用户来自",
+    "您有退货包运费",
+    "亲，已帮你挑好",
+    "请确认收货地址",
+    "协商发货时间",
+    "协商发货时间已同意",
+    "我要咨询这笔订单",
+    "亲，您有一笔订单",
+    "您直接拍",
+    "您直接支付",
+    "商品已帮你挑好",
+    "付这个",
+    "由 小",
+    "转交给 小",
+]
+# 客服名匹配模式
+_AGENT_PATTERNS = [
+    "中科立得旗舰店:",
+    "旗舰店:",
+]
+
+
+def _clean_chat(raw_text: str) -> tuple[str, str]:
+    """清洗原始聊天记录，返回 (标准化文本, 标题)。
+
+    处理逻辑：
+    1. 检测格式（Tab分隔 / 纯文本），按角色分组
+    2. 规则识别角色（客服名含"旗舰店"前缀）
+    3. 过滤系统消息、自动回复
+    4. 合并连续同角色消息
+    """
+    lines = raw_text.replace("\r\n", "\n").split("\n")
+    lines = [ln.strip() for ln in lines if ln.strip()]
+
+    # 检测是否为 Tab 分隔格式（聊天对象\t聊天内容\t聊天时间）
+    messages_raw = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        # 跳过表头
+        if ln.startswith("聊天对象") or ln.startswith("聊天内容") or ln.startswith("聊天时间"):
+            i += 1
+            continue
+        # Tab 分隔格式：nick\tcontent\ttimestamp
+        parts = ln.split("\t")
+        if len(parts) >= 2 and len(parts[0]) < 60:
+            nick = parts[0].strip()
+            content = parts[1].strip()
+            # 跳过时间戳行
+            if len(nick) >= 19 and nick[4] == "-":
+                i += 1
+                continue
+            # 跳过系统消息、卡片、链接
+            if content.startswith("http") or content.startswith("【卡片"):
+                i += 1
+                continue
+            messages_raw.append((nick, content))
+        else:
+            # 非Tab格式：可能是普通文本行
+            # 跳过时间戳
+            if len(ln) >= 19 and ln[4] == "-":
+                i += 1
+                continue
+            # 尝试作为角色名行处理
+            is_nick = any(p in ln for p in _AGENT_PATTERNS) or (len(ln) < 30 and "旗舰店" not in ln)
+            if is_nick:
+                nick = ln
+                content = ""
+                if i + 1 < len(lines):
+                    nxt = lines[i + 1]
+                    if not (len(nxt) >= 19 and nxt[4] == "-"):
+                        content = nxt
+                        i += 1
+                if content:
+                    messages_raw.append((nick, content))
+        i += 1
+
+    # 过滤 + 合并
+    merged = []
+    for nick, content in messages_raw:
+        # 跳过系统自动回复
+        skip = False
+        for pat in _SKIP_PATTERNS:
+            if pat in content:
+                skip = True
+                break
+        if skip:
+            continue
+        if content.startswith("http"):
+            content = "[图片/文件]"
+
+        # 判断角色
+        is_agent = any(pat in nick for pat in _AGENT_PATTERNS)
+        role = "客服" if is_agent else "客户"
+        # 取简洁角色名前缀
+        name = nick.split(":")[0].split("旗舰店:")[0].strip()
+        line = f"{role}：{content}"
+
+        if merged and merged[-1][0] == role:
+            merged[-1] = (role, merged[-1][1] + "\n" + line)
+        else:
+            merged.append((role, line))
+
+    chat_text = "\n".join(msg for _, msg in merged)
+
+    # 生成标题
+    title = "聊天语料导入"
+    if merged:
+        first = merged[0][1].split("\n")[0]
+        title = first[:60]
+
+    return chat_text, title
+
+
+def _detect_result(chat_text: str) -> str:
+    """根据对话内容推断成交结果（简单规则）。"""
+    text_lower = chat_text.lower()
+    # 已成交信号
+    deal_signals = [
+        "下单了", "已下单", "付了", "支付", "成交", "好的，下单",
+        "提交", "就按这个付", "直接拍", "下单后", "下单",
+    ]
+    # 未成交信号
+    fail_signals = [
+        "再考虑", "再看看", "太贵了", "算了", "不做了",
+        "好吧", "嗯呢",
+    ]
+    deal_count = sum(1 for s in deal_signals if s in chat_text)
+    fail_count = sum(1 for s in fail_signals if s in chat_text)
+    if deal_count > fail_count:
+        return "excellent"
+    if fail_count > deal_count:
+        return "failed"
+    return "normal"
+
+
+@app.post("/api/admin/import-chat", response_model=ChatImportReply)
+def import_chat(
+    req: ChatImportRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """导入原始聊天记录：清洗 → 角色识别 → 入库 → LLM 提取。
+
+    自动完成格式化，不必人工整理。
+    """
+    # 验证品类
+    cat = db.query(Category).filter(Category.id == req.category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+
+    # 验证 quality
+    if req.quality not in ("excellent", "normal", "failed"):
+        raise HTTPException(status_code=400, detail="质量标记无效，仅支持 excellent/normal/failed")
+
+    # 清洗
+    chat_text, title = _clean_chat(req.raw_text)
+
+    # 如果用户未标注 quality，自动检测
+    quality = req.quality
+    if quality == "excellent" and "excellent" not in req.raw_text.lower():
+        detected = _detect_result(chat_text)
+        if detected != "excellent":
+            quality = detected
+
+    # 生成文件名
+    fname = f"{uuid.uuid4().hex[:8]}_chat_import.txt"
+    save_path = UPLOAD_DIR / fname
+    save_path.write_text(chat_text, encoding="utf-8")
+
+    # 创建 Material
+    m = Material(
+        category_id=req.category_id,
+        filename=title[:80],
+        file_path=str(save_path),
+        content_text=chat_text,
+        file_type="txt",
+        file_size=len(chat_text.encode("utf-8")),
+        quality=quality,
+        source_type="sales",
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+
+    # 触发 LLM 提取
+    k, used_llm = extract_knowledge(db, req.category_id)
+    content = k.get_content()
+
+    # 提取模式摘要
+    patterns = []
+    for sp in content.get("success_patterns", []):
+        patterns.append(f"[成功] {sp.get('scenario', '')}")
+    for fp in content.get("failure_patterns", []):
+        patterns.append(f"[失败] {fp.get('scenario', '')}")
+
+    return ChatImportReply(
+        material=MaterialOut.model_validate(m, from_attributes=True),
+        knowledge_version=k.version,
+        used_llm=used_llm,
+        success_count=len(content.get("success_patterns", [])),
+        failure_count=len(content.get("failure_patterns", [])),
+        extracted_patterns=patterns,
     )
 
 

@@ -16,6 +16,7 @@
           <div class="tab" :class="{ active: tab === 'mat' }" @click="tab = 'mat'">材料与知识库</div>
           <div class="tab" :class="{ active: tab === 'scores' }" @click="onTabScores">训练成绩</div>
           <div class="tab" :class="{ active: tab === 'trend' }" @click="onTabTrend">成绩趋势</div>
+          <div class="tab" :class="{ active: tab === 'import' }" @click="tab = 'import'">导入语料</div>
         </div>
 
         <!-- 客服账号 -->
@@ -444,6 +445,58 @@
           <div v-if="trendSeries.length" ref="trendChart" class="trend-chart"></div>
           <div v-else class="empty">该筛选条件下暂无已评分的训练记录</div>
         </div>
+
+        <!-- 导入语料 -->
+        <div v-if="tab === 'import'" class="import-panel">
+          <div class="page-title">导入聊天语料</div>
+          <div class="page-sub">粘贴原始聊天记录，系统自动清洗 → 角色识别 → 入库 → LLM 提取</div>
+
+          <div class="row" style="margin-bottom: 12px">
+            <select class="input" v-model="importForm.category_id">
+              <option :value="0" disabled>选择品类</option>
+              <option v-for="c in cats" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <select class="input" v-model="importForm.quality">
+              <option value="excellent">成交案例</option>
+              <option value="failed">未成交案例</option>
+              <option value="normal">普通案例</option>
+            </select>
+          </div>
+
+          <textarea
+            class="input" style="height:260px;font-family:monospace;font-size:13px"
+            v-model="importForm.raw_text"
+            placeholder="粘贴原始聊天记录..."
+          ></textarea>
+
+          <div style="margin-top:12px">
+            <button class="btn" @click="onImportChat" :disabled="importing">
+              {{ importing ? '导入中...' : '导入并提取知识' }}
+            </button>
+            <button class="btn ghost" @click="importForm.raw_text = ''; importResult = null" style="margin-left:8px">
+              清空
+            </button>
+          </div>
+
+          <div v-if="importResult" class="import-result">
+            <div class="result-header">
+              导入完成 —
+              <span :class="importResult.used_llm ? 'green' : 'orange'">
+                {{ importResult.used_llm ? 'LLM 提取' : '规则模式' }}
+              </span>
+              · knowledge v{{ importResult.knowledge_version }}
+            </div>
+            <div class="result-stats">
+              <span class="stat">成功模式 {{ importResult.success_count }} 条</span>
+              <span class="stat">失败模式 {{ importResult.failure_count }} 条</span>
+            </div>
+            <ul v-if="importResult.extracted_patterns.length" class="pattern-list">
+              <li v-for="p in importResult.extracted_patterns" :key="p">{{ p }}</li>
+            </ul>
+          </div>
+
+          <div v-if="importError" class="msg danger" style="margin-top:12px">{{ importError }}</div>
+        </div>
       </div>
     </div>
   </div>
@@ -459,6 +512,7 @@ import {
   listMaterials, uploadMaterial, deleteMaterial, getMaterial, updateMaterial,
   getKnowledge, extractKnowledge,
   listAdminSessions, getAdminSession, getScoreTrends,
+  importChat,
 } from '../api.js'
 
 const router = useRouter()
@@ -846,5 +900,35 @@ watch(tab, (v) => {
 })
 function onTrendResize() {
   if (trendChartInstance) trendChartInstance.resize()
+}
+
+// ---------- 导入语料 ----------
+const importForm = reactive({ category_id: 0, quality: 'excellent', raw_text: '' })
+const importing = ref(false)
+const importResult = ref(null)
+const importError = ref('')
+
+async function onImportChat() {
+  if (!importForm.category_id) { importError.value = '请选择品类'; return }
+  if (!importForm.raw_text.trim()) { importError.value = '请输入聊天记录'; return }
+  importing.value = true
+  importError.value = ''
+  importResult.value = null
+  try {
+    const { data } = await importChat({
+      category_id: importForm.category_id,
+      quality: importForm.quality,
+      raw_text: importForm.raw_text,
+    })
+    importResult.value = data
+    // 刷新材料列表（如果在材料tab）
+    if (matCatId.value === importForm.category_id) {
+      await loadMaterials(importForm.category_id)
+    }
+  } catch (e) {
+    importError.value = e.response?.data?.detail || e.message || '导入失败'
+  } finally {
+    importing.value = false
+  }
 }
 </script>

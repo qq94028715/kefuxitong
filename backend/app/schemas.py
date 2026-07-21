@@ -149,6 +149,24 @@ class FinishReply(BaseModel):
     score: ScoreOut
 
 
+# ---------- 聊天语料导入 ----------
+class ChatImportRequest(BaseModel):
+    """原始聊天记录导入请求。"""
+    category_id: int
+    quality: str = "excellent"  # excellent / normal / failed
+    raw_text: str
+
+
+class ChatImportReply(BaseModel):
+    """聊天语料导入结果。"""
+    material: MaterialOut
+    knowledge_version: int
+    used_llm: bool
+    success_count: int = 0
+    failure_count: int = 0
+    extracted_patterns: list[str] = []  # success/failure 模式摘要
+
+
 # ---------- 管理员：训练成绩查询 ----------
 class AdminSessionListItem(BaseModel):
     """管理员视角的训练记录列表项（含分数摘要）。"""

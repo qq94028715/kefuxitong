@@ -463,3 +463,47 @@ th {
   padding: 12px;
   margin-top: 4px;
 }
+
+/* 导入语料 */
+.import-panel textarea {
+  resize: vertical;
+  min-height: 200px;
+}
+
+.import-result {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--panel-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.import-result .result-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.import-result .result-header .green { color: var(--green, #22c55e); }
+.import-result .result-header .orange { color: var(--orange, #f59e0b); }
+
+.import-result .result-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.import-result .result-stats .stat {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.import-result .pattern-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.import-result .pattern-list li {
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
