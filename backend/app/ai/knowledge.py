@@ -190,7 +190,7 @@ def _extract_with_llm(
         {"role": "system", "content": "你是一名数据工程师，只输出 JSON，不输出任何解释。"},
         {"role": "user", "content": p},
     ]
-    result = llm.chat_json(messages, temperature=0.3)
+    result = llm.chat_json(messages, temperature=0.3, max_tokens=4096)
     if result and "required_questions" in result:
         return result
     return None

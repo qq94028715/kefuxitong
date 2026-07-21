@@ -108,12 +108,13 @@ def stream_chat(
 def chat_json(
     messages: list[dict],
     temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
 ) -> Optional[dict]:
     """调用 LLM 并解析为 JSON dict。失败返回 None。
 
     容错处理：去掉 markdown 代码块、提取首个 { ... } 区间。
     """
-    text = chat(messages, temperature=temperature)
+    text = chat(messages, temperature=temperature, max_tokens=max_tokens)
     if not text:
         return None
     return _parse_json(text)
