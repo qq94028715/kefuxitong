@@ -20,7 +20,12 @@ from . import llm, cache
 from .intent import classify, INTENT_OTHER, INTENT_START, get_intent_label
 from .prompt import load_prompt
 from .quick_reply import get_reply
-from .simulator import build_history_for_llm, get_personality, _build_customer_profiles_section
+from .simulator import (
+    build_history_for_llm,
+    get_personality,
+    _build_customer_profiles_section,
+    _build_question_script_section,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,7 @@ def generate_reply_stream(
     max_turns: int,
     knowledge_id: int,
     conversation_summary: str = "",
+    question_script: str = "",
 ) -> Generator[str, None, None]:
     """流式生成客户回复（生成器）。
 
@@ -89,6 +95,7 @@ def generate_reply_stream(
     history_text = build_history_for_llm(history, conversation_summary)
     personality = get_personality(history)
     profiles_section = _build_customer_profiles_section(knowledge)
+    script_section = _build_question_script_section(question_script)
     p = load_prompt(
         "customer",
         knowledge_json=knowledge_json,
@@ -98,6 +105,7 @@ def generate_reply_stream(
         max_turns=max_turns,
         customer_personality=personality,
         customer_profiles_section=profiles_section,
+        question_script_section=script_section,
     )
     messages = [
         {

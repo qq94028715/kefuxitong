@@ -10,23 +10,57 @@
 
     <div class="container">
       <div class="card">
-        <!-- 选择分类 -->
-        <div v-if="!session">
-          <div class="page-title">开始训练</div>
-          <div class="page-sub">选择一个训练分类，AI 客户将基于知识库与你模拟真实对话。</div>
-          <div class="field">
-            <label>选择训练分类</label>
-            <select class="input" v-model="selectedCatId">
-              <option v-for="c in cats" :key="c.id" :value="c.id">
-                {{ c.name }}{{ c.knowledge_version ? '' : '（未提取知识库，不可训练）' }}
-              </option>
-            </select>
+        <!-- 入口：开新批 / 继续练 / 等待判定 -->
+        <div v-if="!chatting">
+          <div class="page-title">错题本训练</div>
+          <div class="page-sub">每批 20 道客户情景题，AI 客户按真实聊天记录扮演。错题会间隔混入后续批次，直到主管判定合格。</div>
+
+          <!-- 批次状态条 -->
+          <div v-if="progress.has_batch" class="batch-status">
+            <div class="batch-status-row">
+              <span class="tag" :class="batchStatusClass(progress.batch.status)">
+                {{ batchStatusLabel(progress.batch.status) }}
+              </span>
+              <span class="muted">{{ progress.batch.category_name }}</span>
+              <span class="muted" style="margin-left:auto">
+                已完成 {{ progress.done_count }}/{{ progress.batch.question_count }} 题
+              </span>
+            </div>
+            <div class="muted" style="margin-top:6px">
+              <template v-if="progress.mistake_count > 0">
+                错题本：<span class="tag warn">{{ progress.mistake_count }} 道待复练</span>
+                （会间隔混入下一批）
+              </template>
+              <template v-else>错题本：暂无</template>
+            </div>
           </div>
-          <button class="btn" :disabled="!canStart || starting" @click="onStart">
-            {{ starting ? '创建中...' : '开始训练' }}
-          </button>
-          <div v-if="cats.length && !cats.some(c => c.knowledge_version)" class="muted" style="margin-top:8px">
-            所有分类都尚未提取知识库，请联系管理员先上传材料并提取知识。
+
+          <!-- 等待主管判定 -->
+          <div v-if="progress.has_batch && progress.batch.status === 'awaiting_review'" class="panel-wait">
+            <div class="muted" style="font-size:15px">本批 20 题已练完，等待主管判定后才能开始下一批。</div>
+            <button class="btn ghost" style="margin-top:12px" @click="loadProgress">刷新状态</button>
+          </div>
+
+          <!-- 选品类开新批 -->
+          <div v-else>
+            <div class="field">
+              <label>选择训练分类</label>
+              <select class="input" v-model="selectedCatId">
+                <option v-for="c in cats" :key="c.id" :value="c.id">
+                  {{ c.name }}{{ c.knowledge_version ? '' : '（未提取知识库，不可训练）' }}
+                </option>
+              </select>
+            </div>
+            <button
+              class="btn"
+              :disabled="!canStart || starting"
+              @click="onStartBatch"
+            >
+              {{ starting ? '组卷中...' : '开始新一批（20 题）' }}
+            </button>
+            <div v-if="cats.length && !cats.some(c => c.knowledge_version)" class="muted" style="margin-top:8px">
+              所有分类都尚未提取知识库，请联系管理员先上传材料并提取知识。
+            </div>
           </div>
         </div>
 
@@ -34,8 +68,13 @@
         <div v-else>
           <div class="page-title">
             {{ session.category_name }}
-            <span class="tag">{{ session.status === 'completed' ? '已结束' : '训练中' }}</span>
+            <span class="tag" v-if="isMistake" style="background:#f59e0b;color:#fff">错题复练</span>
+            <span class="tag gray">第 {{ seq }}/{{ total }} 题</span>
+            <span class="tag" :class="session.status === 'completed' ? 'ok' : ''">
+              {{ session.status === 'completed' ? '已结束' : '训练中' }}
+            </span>
           </div>
+          <div v-if="questionTitle" class="muted" style="margin:-8px 0 10px">{{ questionTitle }}</div>
 
           <!-- 消息区 -->
           <div class="chat-box" ref="chatBox">
@@ -56,22 +95,22 @@
             <button class="btn" style="flex:0 0 auto" :disabled="!inputText.trim() || sending" @click="onSend">
               发送
             </button>
-            <button class="btn ghost" style="flex:0 0 auto" @click="onFinish">
-              结束并评分
+            <button class="btn ghost" style="flex:0 0 auto" @click="onFinishQuestion">
+              结束本题并评分
             </button>
           </div>
 
-          <!-- 评分 -->
+          <!-- 评分 + 下一题 -->
           <div v-if="score" class="score-card">
             <div class="score-head">
               <div class="score-num" :class="scoreLevel">{{ score.total_score }}</div>
               <div>
-                <div class="score-label">本次训练评分</div>
+                <div class="score-label">本题评分</div>
                 <div class="muted">{{ score.summary }}</div>
               </div>
             </div>
 
-            <!-- 四维评分 -->
+            <!-- 维度评分 -->
             <div v-if="score.dimension_scores && Object.keys(score.dimension_scores).length" class="dim-grid">
               <div v-for="dim in dimensions" :key="dim.key" class="dim-item">
                 <div class="dim-label">
@@ -111,7 +150,18 @@
                 </ul>
               </div>
             </div>
-            <button class="btn" style="margin-top:16px" @click="onReset">再练一次</button>
+
+            <!-- 本批完成 → 提示等待判定；否则下一题 -->
+            <div v-if="batchDone" class="panel-wait" style="margin-top:16px">
+              <div style="font-weight:600;margin-bottom:4px">🎉 本批 {{ total }} 题已全部练完</div>
+              <div class="muted">等待主管判定后才能开始下一批。</div>
+            </div>
+            <div v-else style="margin-top:16px">
+              <div class="muted" style="margin-bottom:8px">本批已完成 {{ doneCount }}/{{ total }} 题</div>
+              <button class="btn" :disabled="starting" @click="onNextQuestion">
+                {{ starting ? '开题中...' : '下一题' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -123,8 +173,8 @@
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  listCategoriesAgent, startSession, listMessages,
-  streamMessage, finishSession, getScore,
+  listCategoriesAgent, batchProgress, startBatch, getBatch, startBatchQuestion,
+  listMessages, streamMessage, finishSession,
 } from '../api.js'
 
 const router = useRouter()
@@ -132,13 +182,23 @@ const username = localStorage.getItem('username') || '客服'
 
 const cats = ref([])
 const selectedCatId = ref(null)
+const progress = ref(null)
+const starting = ref(false)
+
+// 对话状态
+const chatting = ref(false)
 const session = ref(null)
 const messages = ref([])
 const inputText = ref('')
 const sending = ref(false)
-const starting = ref(false)
 const score = ref(null)
 const chatBox = ref(null)
+const seq = ref(0)
+const total = ref(0)
+const isMistake = ref(false)
+const questionTitle = ref('')
+const doneCount = ref(0)
+const batchDone = ref(false)
 
 const canStart = computed(() => {
   const c = cats.value.find(x => x.id === Number(selectedCatId.value))
@@ -157,7 +217,6 @@ const dimensions = computed(() => {
   if (dims && Object.keys(dims).length) {
     return Object.entries(dims).map(([key, max]) => ({ key, label: key, max }))
   }
-  // 兜底默认
   return [
     { key: '需求确认', label: '需求确认', max: 30 },
     { key: '产品专业', label: '产品专业', max: 25 },
@@ -182,6 +241,14 @@ function dimBarClass(key) {
   if (ratio >= 60) return 'bar-mid'
   return 'bar-low'
 }
+function batchStatusLabel(s) {
+  return { in_progress: '训练中', awaiting_review: '待判定', reviewed: '已判定' }[s] || s
+}
+function batchStatusClass(s) {
+  if (s === 'awaiting_review') return 'warn'
+  if (s === 'reviewed') return 'ok'
+  return ''
+}
 
 function logout() {
   localStorage.clear()
@@ -200,17 +267,53 @@ async function loadCats() {
   if (first) selectedCatId.value = first.id
 }
 
-async function onStart() {
+async function loadProgress() {
+  const { data } = await batchProgress()
+  progress.value = data
+  // 若最近一批是训练中，自动把选中品类切到该批品类
+  if (data.has_batch && data.batch && data.batch.status === 'in_progress') {
+    selectedCatId.value = data.batch.category_id
+  }
+}
+
+async function onStartBatch() {
   if (!canStart.value) return
   starting.value = true
   try {
-    const { data } = await startSession(selectedCatId.value)
-    session.value = data
-    const { data: msgs } = await listMessages(data.id)
+    const { data } = await startBatch(selectedCatId.value)
+    progress.value = { has_batch: true, batch: data.batch, done_count: 0, mistake_count: 0, can_start_new: false }
+    await onNextQuestion()
+  } catch (e) {
+    alert(e.response?.data?.detail || '开批失败')
+  } finally {
+    starting.value = false
+  }
+}
+
+async function onNextQuestion() {
+  if (!progress.value?.batch) return
+  starting.value = true
+  try {
+    const { data } = await startBatchQuestion(progress.value.batch.id)
+    session.value = data.session
+    seq.value = data.seq
+    total.value = data.total
+    isMistake.value = data.is_mistake
+    questionTitle.value = data.question.title
+    score.value = null
+    batchDone.value = false
+    inputText.value = ''
+    chatting.value = true
+    const { data: msgs } = await listMessages(data.session.id)
     messages.value = msgs
     await scrollBottom()
   } catch (e) {
-    alert(e.response?.data?.detail || '开始失败')
+    // 可能是本批已全部开始 → 刷新批次状态
+    alert(e.response?.data?.detail || '开题失败')
+    await loadProgress()
+    if (progress.value?.batch?.status === 'awaiting_review') {
+      chatting.value = false
+    }
   } finally {
     starting.value = false
   }
@@ -221,11 +324,9 @@ async function onSend() {
   if (!text || sending.value) return
   sending.value = true
 
-  // 先显示客服消息
   messages.value.push({ id: 'agent-' + Date.now(), role: 'agent', content: text })
   inputText.value = ''
 
-  // 准备空的客户消息气泡（流式逐字填充）
   const customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
   messages.value.push(customerMsg)
   await scrollBottom()
@@ -235,18 +336,15 @@ async function onSend() {
     streamResult = await streamMessage(
       session.value.id,
       text,
-      // onToken: 每收到一个字符追加到气泡
       (token) => {
         customerMsg.content += token
         scrollBottom()
       },
-      // onDone: 流结束
       (data) => {
         streamResult = data
       }
     )
 
-    // 流式结束后刷新消息列表（获取真实 ID）
     const { data: msgs } = await listMessages(session.value.id)
     messages.value = msgs
 
@@ -256,7 +354,6 @@ async function onSend() {
     }
   } catch (e) {
     alert(typeof e === 'string' ? e : e.message || '发送失败')
-    // 失败则移除空的气泡
     messages.value = messages.value.filter(m => m !== customerMsg)
   } finally {
     sending.value = false
@@ -269,15 +366,15 @@ async function autoFinish() {
     const { data } = await finishSession(session.value.id)
     session.value = data.session
     score.value = data.score
+    await refreshDoneCount()
     await scrollBottom()
   } catch (e) {
     // 自动结束失败不阻塞（可能轮数不够）
   }
 }
 
-async function onFinish() {
-  if (!confirm('确认结束训练并评分？')) return
-  // 如果流式消息还在发送中，强制结束（刷新消息列表对齐服务端）
+async function onFinishQuestion() {
+  if (!confirm('确认结束本题并评分？')) return
   if (sending.value) {
     sending.value = false
     try {
@@ -290,6 +387,7 @@ async function onFinish() {
     const { data } = await finishSession(session.value.id)
     session.value = data.session
     score.value = data.score
+    await refreshDoneCount()
     await scrollBottom()
   } catch (e) {
     alert(e.response?.data?.detail || '评分失败')
@@ -298,14 +396,19 @@ async function onFinish() {
   }
 }
 
-function onReset() {
-  session.value = null
-  messages.value = []
-  score.value = null
-  inputText.value = ''
+async function refreshDoneCount() {
+  const { data } = await getBatch(progress.value.batch.id)
+  progress.value.batch = data
+  progress.value.done_count = data.items.filter(i => i.session_status === 'completed').length
+  doneCount.value = progress.value.done_count
+  batchDone.value = data.status === 'awaiting_review'
+  if (batchDone.value) progress.value.has_batch = true
 }
 
-onMounted(loadCats)
+onMounted(async () => {
+  await loadCats()
+  await loadProgress()
+})
 </script>
 
 <style scoped>
@@ -335,6 +438,26 @@ onMounted(loadCats)
   color: #fff;
   border: none;
 }
+.batch-status {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.batch-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.panel-wait {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
 .score-card {
   margin-top: 20px;
   border-top: 1px solid var(--border);
@@ -355,8 +478,6 @@ onMounted(loadCats)
 .score-num.mid { color: #f59e0b; }
 .score-num.low { color: #ef4444; }
 .score-label { font-size: 14px; color: var(--muted); }
-
-/* 四维评分 */
 .dim-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -366,7 +487,6 @@ onMounted(loadCats)
   background: var(--bg);
   border-radius: 8px;
 }
-.dim-item { }
 .dim-label {
   display: flex;
   justify-content: space-between;
@@ -388,7 +508,6 @@ onMounted(loadCats)
 .bar-high { background: #22c55e; }
 .bar-mid { background: #f59e0b; }
 .bar-low { background: #ef4444; }
-
 .score-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

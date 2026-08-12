@@ -154,3 +154,22 @@ export const finishSession = (sessionId) =>
 
 export const getScore = (sessionId) =>
   http.get(`/agent/sessions/${sessionId}/score`)
+
+// ---------- 错题本批次训练（v0.7） ----------
+export const batchProgress = () => http.get('/agent/batch-progress')
+export const startBatch = (categoryId) =>
+  http.post('/agent/batches', { category_id: categoryId })
+export const getBatch = (id) => http.get(`/agent/batches/${id}`)
+export const startBatchQuestion = (batchId) =>
+  http.post(`/agent/batches/${batchId}/start-question`)
+
+// ---------- 管理员：题库与批次判定（v0.7） ----------
+export const listQuestions = (categoryId) =>
+  http.get('/admin/questions', { params: { category_id: categoryId } })
+export const syncQuestions = (categoryId) =>
+  http.post('/admin/questions/sync', null, { params: { category_id: categoryId } })
+export const listAdminBatches = (params = {}) =>
+  http.get('/admin/batches', { params })
+export const getAdminBatch = (id) => http.get(`/admin/batches/${id}`)
+export const reviewBatch = (id, items) =>
+  http.post(`/admin/batches/${id}/review`, { items })

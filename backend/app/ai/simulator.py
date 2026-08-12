@@ -110,17 +110,20 @@ def generate_customer_reply(
     turn_count: int,
     max_turns: int,
     conversation_summary: str = "",
+    question_script: str = "",
 ) -> str:
     """生成 AI 客户的下一句话。
 
     turn_count: 已完成的对话轮数（客服已回答的次数）
     conversation_summary: 长对话的 AI 历史摘要（用于压缩传给 LLM 的上下文）
+    question_script: 本题客户剧本（聊天记录原文），非空时客户按剧本蓝本衍生扮演
     返回 END_MARKER 表示客户主动结束对话。
     """
     if llm.is_llm_enabled():
         reply = _reply_with_llm(
             knowledge, history, category_name, turn_count, max_turns,
             conversation_summary=conversation_summary,
+            question_script=question_script,
         )
         if reply:
             reply = reply.strip().strip('"').strip("'")
@@ -140,11 +143,13 @@ def _reply_with_llm(
     turn_count: int,
     max_turns: int,
     conversation_summary: str = "",
+    question_script: str = "",
 ) -> str | None:
     knowledge_json = json.dumps(knowledge, ensure_ascii=False, indent=2)
     history_text = build_history_for_llm(history, conversation_summary)
     personality = get_personality(history)
     profiles_section = _build_customer_profiles_section(knowledge)
+    script_section = _build_question_script_section(question_script)
     p = prompt.load_prompt(
         "customer",
         knowledge_json=knowledge_json,
@@ -154,6 +159,7 @@ def _reply_with_llm(
         max_turns=max_turns,
         customer_personality=personality,
         customer_profiles_section=profiles_section,
+        question_script_section=script_section,
     )
     messages = [
         {
@@ -163,6 +169,25 @@ def _reply_with_llm(
         {"role": "user", "content": p},
     ]
     return llm.chat(messages, temperature=0.8, max_tokens=200)
+
+
+def _build_question_script_section(question_script: str) -> str:
+    """构造客户剧本注入段落。
+
+    剧本非空时，指示 AI 客户以真实聊天记录为蓝本衍生扮演；
+    为空时返回空串，不影响无题目的旧流程。
+    """
+    if not question_script:
+        return ""
+    return (
+        "【客户剧本参考（真实聊天记录，你是其中的客户）】\n"
+        "下面是一段真实客服与客户的聊天记录，你就是其中的那位客户。\n"
+        "你必须保持这位客户的需求、身份、性格、异议和推进节奏，尽量还原其说话方式；\n"
+        "不要逐字复读剧本，而是根据客服当前回答自然衍生后续对话，顺着剧本的走向走。\n"
+        "如果剧本中的客户最后成交了，你也倾向于促成成交；如果剧本中的客户流失了，\n"
+        "你要在合适的时机表达犹豫、质疑或离开的意向，考察客服能否挽回。\n"
+        f"【剧本原文】\n{question_script}"
+    )
 
 
 def _build_customer_profiles_section(knowledge: dict) -> str:

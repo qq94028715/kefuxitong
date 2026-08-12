@@ -142,6 +142,9 @@ class ChatSession(Base):
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
     conversation_summary = Column(Text, default="")  # 长对话的 AI 历史摘要（压缩 LLM 上下文）
+    batch_question_id = Column(  # 错题本批次内题目（旧会话为 NULL，兼容）
+        Integer, ForeignKey("batch_question.id"), nullable=True, index=True
+    )
 
     messages = relationship(
         "ChatMessage",
@@ -223,3 +226,95 @@ class Score(Base):
 
     def set_dimension_scores(self, dimension_scores: dict) -> None:
         self.dimension_scores = json.dumps(dimension_scores, ensure_ascii=False)
+
+
+# ===================== 错题本训练闭环（v0.7） =====================
+
+
+class Question(Base):
+    """训练题目（客户剧本）。
+
+    来源两种：
+    - uploaded: 由已上传的 sales 聊天记录自动转题（source_material_id 指向原材料）
+    - ai: AI 根据上传题生成的衍生题（二期）
+
+    扮演时，AI 客户以 script_text 为蓝本衍生对话。
+    """
+
+    __tablename__ = "question"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(Integer, ForeignKey("category.id"), nullable=False, index=True)
+    source_material_id = Column(Integer, nullable=True)  # 由哪条材料转题
+    title = Column(String(255), nullable=False)  # 题目名
+    scenario = Column(Text, default="")  # 客户场景/画像描述
+    script_text = Column(Text, default="")  # 客户剧本（聊天记录原文 / 衍生文本）
+    source_type = Column(String(16), default="uploaded")  # uploaded / ai
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    category = relationship("Category")
+
+
+class TrainingBatch(Base):
+    """客服一次训练批次（默认 20 题）。
+
+    status 状态机：
+    - in_progress:    练题中（20 题未全完成）
+    - awaiting_review: 20 题练完，等主管判定
+    - reviewed:        主管判定完，客服可开下一批
+    """
+
+    __tablename__ = "training_batch"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    category_id = Column(Integer, ForeignKey("category.id"), nullable=False, index=True)
+    status = Column(String(16), default="in_progress")
+    question_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_at = Column(DateTime, nullable=True)
+
+    items = relationship(
+        "BatchQuestion",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="BatchQuestion.seq",
+    )
+
+
+class BatchQuestion(Base):
+    """批内题目：关联该题的训练会话与主管判定结果。"""
+
+    __tablename__ = "batch_question"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(
+        Integer, ForeignKey("training_batch.id"), nullable=False, index=True
+    )
+    question_id = Column(Integer, ForeignKey("question.id"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False)  # 批内序号 1..N
+    session_id = Column(
+        Integer, ForeignKey("chat_session.id"), nullable=True, index=True
+    )  # 该题对应的训练会话（开始练后非空）
+    review_status = Column(String(16), default="pending")  # pending / approved / rejected
+    reviewed_at = Column(DateTime, nullable=True)
+
+    batch = relationship("TrainingBatch", back_populates="items")
+    question = relationship("Question")
+
+
+class MistakeLog(Base):
+    """客服错题本：被主管判定「不合适」的题目，间隔混入后续批次，直到判定「合适」。"""
+
+    __tablename__ = "mistake_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    question_id = Column(Integer, ForeignKey("question.id"), nullable=False, index=True)
+    appear_count = Column(Integer, default=1)  # 累计判错次数
+    added_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)  # 非空 = 已通过
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "question_id", name="uq_mistake_user_question"),
+    )

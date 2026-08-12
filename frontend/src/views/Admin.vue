@@ -16,6 +16,8 @@
           <div class="tab" :class="{ active: tab === 'mat' }" @click="tab = 'mat'">材料与知识库</div>
           <div class="tab" :class="{ active: tab === 'scores' }" @click="onTabScores">训练成绩</div>
           <div class="tab" :class="{ active: tab === 'trend' }" @click="onTabTrend">成绩趋势</div>
+          <div class="tab" :class="{ active: tab === 'batches' }" @click="onTabBatches">训练管理</div>
+          <div class="tab" :class="{ active: tab === 'questions' }" @click="onTabQuestions">题库管理</div>
           <div class="tab" :class="{ active: tab === 'import' }" @click="tab = 'import'">导入语料</div>
         </div>
 
@@ -497,6 +499,158 @@
 
           <div v-if="importError" class="msg danger" style="margin-top:12px">{{ importError }}</div>
         </div>
+
+        <!-- 训练管理（批次判定） -->
+        <div v-if="tab === 'batches'">
+          <div class="page-title">训练管理（主管判定）</div>
+          <div class="page-sub">
+            客服每练完一批（20 题），主管逐题判定「合适/不合适」。
+            不合适 → 进该客服错题本，间隔混入后续批次；合适 → 解错题。
+            全部判定完，客服才能开下一批。
+          </div>
+
+          <div class="row" style="margin-bottom: 16px">
+            <select class="input" v-model="batchFilter.user_id">
+              <option :value="null">全部客服</option>
+              <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.username }}</option>
+            </select>
+            <select class="input" v-model="batchFilter.status">
+              <option :value="null">全部状态</option>
+              <option value="in_progress">训练中</option>
+              <option value="awaiting_review">待判定</option>
+              <option value="reviewed">已判定</option>
+            </select>
+            <button class="btn" style="flex: 0 0 auto" @click="loadBatches">查询</button>
+          </div>
+
+          <table v-if="batchList.length">
+            <thead>
+              <tr>
+                <th>ID</th><th>客服</th><th>分类</th><th>状态</th>
+                <th>题数</th><th>已判定</th><th>开始时间</th><th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="b in batchList" :key="b.id">
+                <td>{{ b.id }}</td>
+                <td>{{ b.username }}</td>
+                <td>{{ b.category_name }}</td>
+                <td>
+                  <span class="tag" :class="batchStatusTagClass(b.status)">{{ batchStatusLabel(b.status) }}</span>
+                </td>
+                <td>{{ b.question_count }}</td>
+                <td>{{ b.reviewed_count }}/{{ b.question_count }}</td>
+                <td>{{ fmt(b.created_at) }}</td>
+                <td>
+                  <button class="btn sm" @click="onViewBatch(b.id)">
+                    {{ b.status === 'awaiting_review' ? '去判定' : '查看' }}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="empty">暂无训练批次</div>
+
+          <!-- 批次判定弹窗 -->
+          <div v-if="batchDetail" class="modal-overlay" @click.self="batchDetail = null">
+            <div class="modal-card" style="max-width:880px">
+              <div class="modal-header">
+                <strong>批次 #{{ batchDetail.id }} · {{ batchDetail.username }} · {{ batchDetail.category_name }}</strong>
+                <span class="tag" :class="batchStatusTagClass(batchDetail.status)" style="margin-left:12px">
+                  {{ batchStatusLabel(batchDetail.status) }}
+                </span>
+              </div>
+              <div style="max-height:58vh;overflow-y:auto">
+                <div
+                  v-for="it in batchDetail.items"
+                  :key="it.id"
+                  class="card"
+                  style="background:var(--bg);padding:12px;margin-bottom:10px"
+                  :style="it.review_status === 'approved' ? 'border-left:3px solid var(--success)' : (it.review_status === 'rejected' ? 'border-left:3px solid var(--danger)' : '')"
+                >
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span class="tag gray">第 {{ it.seq }} 题</span>
+                    <strong>{{ it.question_title }}</strong>
+                    <span v-if="it.is_mistake" class="tag warn">错题</span>
+                    <span v-if="it.session_status === 'completed'" class="tag ok">已练</span>
+                    <span v-else class="tag gray">未练</span>
+                    <span v-if="it.score_total !== null" :class="scoreClass(it.score_total)" style="font-weight:600">
+                      {{ it.score_total.toFixed(1) }} 分
+                    </span>
+                  </div>
+
+                  <!-- 已判定 -->
+                  <div v-if="it.review_status !== 'pending'" style="margin-top:8px">
+                    <span class="tag" :class="it.review_status === 'approved' ? 'ok' : 'danger'">
+                      {{ it.review_status === 'approved' ? '✅ 合适' : '❌ 不合适' }}
+                    </span>
+                  </div>
+                  <!-- 待判定：本地暂选 + 提交 -->
+                  <div v-else style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <template v-if="reviewMap[it.question_id] === undefined">
+                      <button class="btn sm" @click="onJudge(it.question_id, true)">合适</button>
+                      <button class="btn sm danger" @click="onJudge(it.question_id, false)">不合适</button>
+                    </template>
+                    <template v-else>
+                      <span class="tag" :class="reviewMap[it.question_id] ? 'ok' : 'danger'">
+                        已选：{{ reviewMap[it.question_id] ? '合适' : '不合适' }}
+                      </span>
+                      <button class="btn ghost sm" @click="onUnjudge(it.question_id)">取消</button>
+                    </template>
+                    <button v-if="it.session_id" class="btn ghost sm" @click="onViewScore(it.session_id)">看对话</button>
+                  </div>
+                </div>
+              </div>
+              <div class="row" style="justify-content:flex-end;margin-top:12px">
+                <span v-if="batchReviewCount" class="muted" style="margin-right:12px">已选 {{ batchReviewCount }} 题待提交</span>
+                <button class="btn" :disabled="!batchReviewCount || reviewing" @click="onSubmitReview">
+                  {{ reviewing ? '提交中...' : `提交判定（${batchReviewCount} 题）` }}
+                </button>
+                <button class="btn ghost" @click="batchDetail = null">关闭</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 题库管理 -->
+        <div v-if="tab === 'questions'">
+          <div class="page-title">题库管理</div>
+          <div class="page-sub">
+            题目 = 客户剧本。已上传的销售聊天记录（导入语料）可一键转为题目；
+            AI 客户训练时按题目剧本衍生扮演，错题本基于题目维度工作。
+          </div>
+
+          <div class="row" style="margin-bottom: 16px">
+            <select class="input" v-model="qCatId" @change="loadQuestions">
+              <option v-for="c in cats" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <button class="btn" style="flex: 0 0 auto" :disabled="syncingQ" @click="onSyncQuestions">
+              {{ syncingQ ? '同步中...' : '同步题目（从聊天记录）' }}
+            </button>
+            <button class="btn ghost" style="flex: 0 0 auto" @click="loadQuestions">刷新</button>
+          </div>
+          <div v-if="syncMsg" class="muted" style="margin-bottom:10px">{{ syncMsg }}</div>
+
+          <table v-if="questions.length">
+            <thead>
+              <tr><th>ID</th><th>题目</th><th>客户场景</th><th>来源</th><th>创建时间</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="q in questions" :key="q.id">
+                <td>{{ q.id }}</td>
+                <td><strong>{{ q.title }}</strong></td>
+                <td class="muted" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ q.scenario || '-' }}</td>
+                <td>
+                  <span class="tag" :class="q.source_type === 'ai' ? 'warn' : 'gray'">
+                    {{ q.source_type === 'ai' ? 'AI 衍生' : '上传语料' }}
+                  </span>
+                </td>
+                <td>{{ fmt(q.created_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="empty">该品类暂无题目，请先在「导入语料」粘贴聊天记录，再点「同步题目」</div>
+        </div>
       </div>
     </div>
   </div>
@@ -513,6 +667,8 @@ import {
   getKnowledge, extractKnowledge,
   listAdminSessions, getAdminSession, getScoreTrends,
   importChat,
+  listAdminBatches, getAdminBatch, reviewBatch,
+  listQuestions, syncQuestions,
 } from '../api.js'
 
 const router = useRouter()
@@ -929,6 +1085,107 @@ async function onImportChat() {
     importError.value = e.response?.data?.detail || e.message || '导入失败'
   } finally {
     importing.value = false
+  }
+}
+
+// ---------- 训练管理（批次判定，v0.7） ----------
+const batchList = ref([])
+const batchFilter = reactive({ user_id: null, status: null })
+const batchDetail = ref(null)
+const reviewMap = reactive({}) // question_id -> passed
+const reviewing = ref(false)
+
+function batchStatusLabel(s) {
+  return { in_progress: '训练中', awaiting_review: '待判定', reviewed: '已判定' }[s] || s
+}
+function batchStatusTagClass(s) {
+  if (s === 'awaiting_review') return 'warn'
+  if (s === 'reviewed') return 'ok'
+  return 'gray'
+}
+function onTabBatches() {
+  tab.value = 'batches'
+  loadBatches()
+}
+async function loadBatches() {
+  try {
+    const params = {}
+    if (batchFilter.user_id) params.user_id = batchFilter.user_id
+    if (batchFilter.status) params.status = batchFilter.status
+    const { data } = await listAdminBatches(params)
+    batchList.value = data
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载批次失败')
+  }
+}
+async function onViewBatch(id) {
+  try {
+    const { data } = await getAdminBatch(id)
+    batchDetail.value = data
+    Object.keys(reviewMap).forEach((k) => delete reviewMap[k])
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载批次详情失败')
+  }
+}
+function onJudge(questionId, passed) {
+  reviewMap[questionId] = passed
+}
+function onUnjudge(questionId) {
+  delete reviewMap[questionId]
+}
+const batchReviewCount = computed(() => Object.keys(reviewMap).length)
+async function onSubmitReview() {
+  const items = Object.entries(reviewMap).map(([qid, passed]) => ({
+    question_id: Number(qid),
+    passed,
+  }))
+  if (!items.length) return
+  reviewing.value = true
+  try {
+    const { data } = await reviewBatch(batchDetail.value.id, items)
+    batchDetail.value = data.batch
+    Object.keys(reviewMap).forEach((k) => delete reviewMap[k])
+    await loadBatches()
+    alert(`已判定 ${items.length} 题` + (data.mistakes_updated ? `，其中 ${data.mistakes_updated} 题进入错题本` : ''))
+  } catch (e) {
+    alert(e.response?.data?.detail || '提交判定失败')
+  } finally {
+    reviewing.value = false
+  }
+}
+
+// ---------- 题库管理（v0.7） ----------
+const qCatId = ref(null)
+const questions = ref([])
+const syncingQ = ref(false)
+const syncMsg = ref('')
+
+function onTabQuestions() {
+  tab.value = 'questions'
+  if (!qCatId.value && matCatId.value) qCatId.value = matCatId.value
+  loadQuestions()
+}
+async function loadQuestions() {
+  if (!qCatId.value) return
+  try {
+    const { data } = await listQuestions(qCatId.value)
+    questions.value = data
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载题库失败')
+  }
+}
+async function onSyncQuestions() {
+  if (!qCatId.value) return
+  syncingQ.value = true
+  syncMsg.value = ''
+  try {
+    const { data } = await syncQuestions(qCatId.value)
+    syncMsg.value = `同步完成：新建 ${data.created} 题，题库共 ${data.total} 题`
+    await loadQuestions()
+  } catch (e) {
+    alert(e.response?.data?.detail || '同步题库失败')
+  } finally {
+    syncingQ.value = false
   }
 }
 </script>

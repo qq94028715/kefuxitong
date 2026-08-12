@@ -6,6 +6,7 @@ v0.3 核心升级：Intent 三层路由 + 流式输出。
 - SSE 流式传输，前端逐字显示
 """
 import json
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -13,9 +14,11 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
+from . import batch as batch_svc
 from .ai import cache as reply_cache
 from .ai import llm
 from .ai.evaluator import evaluate_session
@@ -38,19 +41,28 @@ from .auth import (
 from .config import UPLOAD_DIR, settings
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
+    BatchQuestion,
     Category,
     ChatMessage,
     ChatSession,
     Knowledge,
     Material,
+    MistakeLog,
+    Question,
     Score,
+    TrainingBatch,
     User,
 )
 from .schemas import (
-    AgentCreate,
-    AgentOut,
+    AdminBatchListItem,
     AdminSessionDetail,
     AdminSessionListItem,
+    AgentBatchProgress,
+    AgentCreate,
+    AgentOut,
+    BatchQuestionOut,
+    BatchStartReply,
+    BatchStartRequest,
     CategoryCreate,
     CategoryOut,
     ChatImportReply,
@@ -64,6 +76,10 @@ from .schemas import (
     MaterialOut,
     MaterialUpdate,
     MessageOut,
+    QuestionOut,
+    QuestionSyncReply,
+    ReviewBatchReply,
+    ReviewBatchRequest,
     ScoreOut,
     ScoreTrendsResponse,
     ScoreTrendSeries,
@@ -72,7 +88,9 @@ from .schemas import (
     SendMessageRequest,
     SessionCreateRequest,
     SessionOut,
+    StartQuestionReply,
     TokenResponse,
+    TrainingBatchOut,
 )
 
 # 内置示例知识（首次启动写入，无 LLM 也能体验训练流程）
@@ -168,6 +186,7 @@ DEFAULT_KNOWLEDGE: dict[str, dict] = {
 def init_db():
     """建表并写入默认数据（管理员 + 两个分类 + 示例知识）。"""
     Base.metadata.create_all(bind=engine)
+    _migrate_legacy_columns()
     db = SessionLocal()
     try:
         # 默认管理员
@@ -199,6 +218,22 @@ def init_db():
         db.commit()
     finally:
         db.close()
+
+
+def _migrate_legacy_columns():
+    """轻量迁移：旧库 chat_session 无 batch_question_id 列时补列（不删库）。"""
+    try:
+        if "chat_session" not in inspect(engine).get_table_names():
+            return
+        cols = [c["name"] for c in inspect(engine).get_columns("chat_session")]
+        if "batch_question_id" not in cols:
+            with engine.connect() as conn:
+                conn.execute(
+                    text("ALTER TABLE chat_session ADD COLUMN batch_question_id INTEGER")
+                )
+                conn.commit()
+    except Exception as e:  # 迁移失败不阻塞启动
+        logging.getLogger(__name__).warning("chat_session 迁移失败: %s", e)
 
 
 @asynccontextmanager
@@ -729,6 +764,95 @@ def import_chat(
 
 
 # ---------- 训练成绩（管理员） ----------
+# ---------- 管理员：题库与批次判定（v0.7 错题本闭环） ----------
+
+
+@app.get("/api/admin/questions", response_model=list[QuestionOut])
+def list_questions(
+    category_id: int = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """题库列表（可按品类过滤）。"""
+    q = db.query(Question)
+    if category_id:
+        q = q.filter(Question.category_id == category_id)
+    return [_question_out(x) for x in q.order_by(Question.id.desc()).all()]
+
+
+@app.post("/api/admin/questions/sync", response_model=QuestionSyncReply)
+def sync_questions_api(
+    category_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """把该品类已上传的 sales 聊天记录补转为题目。"""
+    created = batch_svc.sync_questions(db, category_id)
+    total = db.query(Question).filter(Question.category_id == category_id).count()
+    return QuestionSyncReply(created=created, total=total)
+
+
+@app.get("/api/admin/batches", response_model=list[AdminBatchListItem])
+def list_batches(
+    user_id: int = None,
+    status: str = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """批次列表（可按客服/状态筛选）。"""
+    q = db.query(TrainingBatch)
+    if user_id:
+        q = q.filter(TrainingBatch.user_id == user_id)
+    if status:
+        q = q.filter(TrainingBatch.status == status)
+    result = []
+    for b in q.order_by(TrainingBatch.id.desc()).all():
+        u = db.query(User).filter(User.id == b.user_id).first()
+        cat = db.query(Category).filter(Category.id == b.category_id).first()
+        reviewed_count = sum(1 for bq in b.items if bq.review_status != "pending")
+        result.append(
+            AdminBatchListItem(
+                id=b.id, user_id=b.user_id, username=u.username if u else "",
+                category_id=b.category_id, category_name=cat.name if cat else "",
+                status=b.status, question_count=b.question_count,
+                reviewed_count=reviewed_count,
+                created_at=b.created_at, reviewed_at=b.reviewed_at,
+            )
+        )
+    return result
+
+
+@app.get("/api/admin/batches/{batch_id}", response_model=TrainingBatchOut)
+def admin_batch_detail(
+    batch_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    """批次详情（20 题 + 会话/评分摘要 + 判定状态）。"""
+    b = db.query(TrainingBatch).filter(TrainingBatch.id == batch_id).first()
+    if not b:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return _batch_out(db, b, b.user_id)
+
+
+@app.post("/api/admin/batches/{batch_id}/review", response_model=ReviewBatchReply)
+def review_batch_api(
+    batch_id: int,
+    req: ReviewBatchRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """主管判定：逐题点合适/不合适。不合适进错题本，合适解错题。"""
+    try:
+        changed = batch_svc.review_batch(
+            db,
+            batch_id,
+            [{"question_id": i.question_id, "passed": i.passed} for i in req.items],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    b = db.query(TrainingBatch).filter(TrainingBatch.id == batch_id).first()
+    return ReviewBatchReply(batch=_batch_out(db, b, b.user_id), mistakes_updated=changed)
+
+
 @app.get("/api/admin/sessions", response_model=list[AdminSessionListItem])
 def admin_list_sessions(
     user_id: int | None = None,
@@ -923,6 +1047,126 @@ def list_categories_agent(_: User = Depends(require_agent), db: Session = Depend
     return _categories_with_count(db)
 
 
+# ---------- 错题本批次训练（v0.7） ----------
+
+
+@app.get("/api/agent/batch-progress", response_model=AgentBatchProgress)
+def batch_progress(
+    user: User = Depends(require_agent), db: Session = Depends(get_db)
+):
+    """客服训练进度：当前批次状态 + 错题本数量 + 能否开新批。"""
+    batch = batch_svc.latest_batch(db, user.id)
+    if not batch:
+        return AgentBatchProgress(has_batch=False, can_start_new=True)
+    done_count = sum(
+        1
+        for bq in batch.items
+        if bq.session_id
+        and (
+            db.query(ChatSession).filter(ChatSession.id == bq.session_id).first().status
+            == "completed"
+        )
+    )
+    mistake_count = batch_svc.count_unresolved_mistakes(db, user.id)
+    return AgentBatchProgress(
+        has_batch=True,
+        batch=_batch_out(db, batch, user.id),
+        done_count=done_count,
+        mistake_count=mistake_count,
+        can_start_new=batch.status == "reviewed",
+    )
+
+
+@app.post("/api/agent/batches", response_model=BatchStartReply)
+def start_batch(
+    req: BatchStartRequest,
+    user: User = Depends(require_agent),
+    db: Session = Depends(get_db),
+):
+    """开新批：组卷 20 题（错题间隔混入）。有未完成/未判定批次时禁止开新批。"""
+    active = (
+        db.query(TrainingBatch)
+        .filter(
+            TrainingBatch.user_id == user.id,
+            TrainingBatch.status.in_(["in_progress", "awaiting_review"]),
+        )
+        .first()
+    )
+    if active:
+        raise HTTPException(
+            status_code=400, detail="还有未练完或未判定的批次，请先完成再开新一批"
+        )
+    cat = db.query(Category).filter(Category.id == req.category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    try:
+        batch = batch_svc.create_batch(db, user.id, req.category_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return BatchStartReply(batch=_batch_out(db, batch, user.id))
+
+
+@app.get("/api/agent/batches/{batch_id}", response_model=TrainingBatchOut)
+def get_batch(
+    batch_id: int, user: User = Depends(require_agent), db: Session = Depends(get_db)
+):
+    b = (
+        db.query(TrainingBatch)
+        .filter(TrainingBatch.id == batch_id, TrainingBatch.user_id == user.id)
+        .first()
+    )
+    if not b:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return _batch_out(db, b, user.id)
+
+
+@app.post("/api/agent/batches/{batch_id}/start-question", response_model=StartQuestionReply)
+def start_batch_question(
+    batch_id: int, user: User = Depends(require_agent), db: Session = Depends(get_db)
+):
+    """开始批内下一道未做的题：创建训练会话，AI 客户按本题剧本开场。"""
+    b = (
+        db.query(TrainingBatch)
+        .filter(TrainingBatch.id == batch_id, TrainingBatch.user_id == user.id)
+        .first()
+    )
+    if not b:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    if b.status == "awaiting_review":
+        raise HTTPException(status_code=400, detail="本批已练完，等待主管判定")
+    if b.status == "reviewed":
+        raise HTTPException(status_code=400, detail="本批已判定完，请开新一批")
+
+    session, question, bq = batch_svc.start_question(db, b, user.id)
+    if not session:
+        batch_svc.refresh_batch_status(db, b)
+        raise HTTPException(status_code=400, detail="本批题目已全部开始")
+
+    cat = db.query(Category).filter(Category.id == b.category_id).first()
+    knowledge = get_knowledge_for_training(db, b.category_id)
+    reply = generate_customer_reply(
+        knowledge,
+        history=[],
+        category_name=cat.name if cat else "",
+        turn_count=0,
+        max_turns=settings.max_dialogue_turns,
+        question_script=question.script_text if question else "",
+    )
+    reply = _clean_reply(reply)
+    db.add(ChatMessage(session_id=session.id, role="customer", content=reply))
+    db.commit()
+    db.refresh(session)
+
+    return StartQuestionReply(
+        session=_session_out(session, cat.name if cat else ""),
+        question=_question_out(question),
+        seq=bq.seq,
+        total=b.question_count,
+        is_mistake=batch_svc.is_mistake(db, user.id, question.id),
+        batch_status=b.status,
+    )
+
+
 @app.post("/api/agent/sessions", response_model=SessionOut)
 def start_session(
     req: SessionCreateRequest,
@@ -998,11 +1242,12 @@ def send_message(
     summary = _compute_summary(s, cat.name if cat else "")
     s.conversation_summary = summary
 
-    # 生成 AI 客户回复
+    # 生成 AI 客户回复（批次题绑定剧本时按剧本衍生扮演）
     raw = generate_customer_reply(
         knowledge, history=history, category_name=cat.name,
         turn_count=turn_count, max_turns=settings.max_dialogue_turns,
         conversation_summary=summary,
+        question_script=_session_question_script(db, s),
     )
 
     customer_msg = None
@@ -1081,6 +1326,9 @@ def stream_message(
     summary = _compute_summary(s, cat.name if cat else "")
     s.conversation_summary = summary
 
+    # 剧本必须在闭包外取（db 在请求结束后会关闭，生成器内再访问会失效）
+    question_script = _session_question_script(db, s)
+
     # 提交客服消息，后续 generator 用独立 session
     db.commit()
     db.refresh(agent_msg)
@@ -1098,6 +1346,7 @@ def stream_message(
             max_turns=settings.max_dialogue_turns,
             knowledge_id=knowledge_id,
             conversation_summary=summary,
+            question_script=question_script,
         ):
             if chunk == "[DONE]":
                 break
@@ -1179,6 +1428,22 @@ def finish_session(
     db.refresh(s)
     db.refresh(score)
 
+    # 批次题完成 → 刷新批次状态（20 题练完 → awaiting_review）
+    if s.batch_question_id:
+        bq = (
+            db.query(BatchQuestion)
+            .filter(BatchQuestion.id == s.batch_question_id)
+            .first()
+        )
+        if bq:
+            batch = (
+                db.query(TrainingBatch)
+                .filter(TrainingBatch.id == bq.batch_id)
+                .first()
+            )
+            if batch:
+                batch_svc.refresh_batch_status(db, batch)
+
     return FinishReply(
         session=_session_out(s, cat.name if cat else ""),
         score=_score_out(score),
@@ -1250,6 +1515,64 @@ def _get_user_session(db: Session, session_id: int, user_id: int) -> ChatSession
     if not s:
         raise HTTPException(status_code=404, detail="训练会话不存在")
     return s
+
+
+def _session_question_script(db: Session, session) -> str:
+    """取会话绑定的题目剧本（旧会话无绑定返回空串）。"""
+    if not session.batch_question_id:
+        return ""
+    bq = (
+        db.query(BatchQuestion)
+        .filter(BatchQuestion.id == session.batch_question_id)
+        .first()
+    )
+    if not bq:
+        return ""
+    q = db.query(Question).filter(Question.id == bq.question_id).first()
+    return q.script_text if q else ""
+
+
+def _question_out(q: Question) -> QuestionOut:
+    cat_name = q.category.name if q.category else ""
+    return QuestionOut(
+        id=q.id, category_id=q.category_id, category_name=cat_name,
+        title=q.title, scenario=q.scenario, script_text=q.script_text,
+        source_type=q.source_type, source_material_id=q.source_material_id,
+        created_at=q.created_at,
+    )
+
+
+def _batch_question_out(
+    db: Session, bq: BatchQuestion, user_id: int
+) -> "BatchQuestionOut":
+    q = bq.question
+    score_total = None
+    session_status = ""
+    if bq.session_id:
+        s = db.query(ChatSession).filter(ChatSession.id == bq.session_id).first()
+        if s:
+            session_status = s.status
+            if s.score:
+                score_total = s.score.total_score
+    return BatchQuestionOut(
+        id=bq.id, seq=bq.seq, question_id=bq.question_id,
+        question_title=q.title if q else "",
+        is_mistake=batch_svc.is_mistake(db, user_id, bq.question_id),
+        session_id=bq.session_id, session_status=session_status,
+        score_total=score_total, review_status=bq.review_status,
+        reviewed_at=bq.reviewed_at,
+    )
+
+
+def _batch_out(db: Session, batch: TrainingBatch, user_id: int) -> TrainingBatchOut:
+    cat = db.query(Category).filter(Category.id == batch.category_id).first()
+    return TrainingBatchOut(
+        id=batch.id, user_id=batch.user_id, category_id=batch.category_id,
+        category_name=cat.name if cat else "",
+        status=batch.status, question_count=batch.question_count,
+        created_at=batch.created_at, reviewed_at=batch.reviewed_at,
+        items=[_batch_question_out(db, bq, user_id) for bq in batch.items],
+    )
 
 
 def _clean_reply(raw: str) -> str:

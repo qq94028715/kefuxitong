@@ -246,3 +246,120 @@ class ScoreTrendsResponse(BaseModel):
     users: list[dict]  # 过滤用：[{"id","name"}]
     categories: list[dict]  # 过滤用：[{"id","name"}]
     series: list[ScoreTrendSeries]
+
+
+# ---------- 错题本训练闭环（v0.7） ----------
+class QuestionOut(BaseModel):
+    """训练题目（客户剧本）。"""
+
+    id: int
+    category_id: int
+    category_name: str = ""
+    title: str
+    scenario: str = ""
+    script_text: str = ""
+    source_type: str = "uploaded"  # uploaded / ai
+    source_material_id: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuestionSyncReply(BaseModel):
+    created: int  # 本次新建题目数
+    total: int  # 该品类题目总数
+
+
+class BatchStartRequest(BaseModel):
+    """客服开新批请求。"""
+
+    category_id: int
+
+
+class BatchQuestionOut(BaseModel):
+    """批内单题（含会话与判定摘要）。"""
+
+    id: int
+    seq: int
+    question_id: int
+    question_title: str = ""
+    is_mistake: bool = False  # 该题当前在该客服错题本
+    session_id: Optional[int] = None
+    session_status: str = ""  # in_progress / completed / ""
+    score_total: Optional[float] = None
+    review_status: str = "pending"  # pending / approved / rejected
+    reviewed_at: Optional[datetime] = None
+
+
+class TrainingBatchOut(BaseModel):
+    """训练批次视图。"""
+
+    id: int
+    user_id: int
+    category_id: int
+    category_name: str = ""
+    status: str  # in_progress / awaiting_review / reviewed
+    question_count: int = 0
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+    items: list[BatchQuestionOut] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchStartReply(BaseModel):
+    """开新批响应。"""
+
+    batch: TrainingBatchOut
+
+
+class StartQuestionReply(BaseModel):
+    """开始批内一题。"""
+
+    session: SessionOut
+    question: QuestionOut
+    seq: int = 0
+    total: int = 0
+    is_mistake: bool = False
+    batch_status: str = "in_progress"
+
+
+class AgentBatchProgress(BaseModel):
+    """客服训练进度视图。"""
+
+    has_batch: bool = False
+    batch: Optional[TrainingBatchOut] = None  # 当前/最近批次
+    done_count: int = 0  # 当前批已完成题数
+    mistake_count: int = 0  # 错题本未解决题数
+    can_start_new: bool = False  # 能否开新批（无 in_progress/awaiting 批次）
+
+
+class ReviewItem(BaseModel):
+    question_id: int
+    passed: bool
+
+
+class ReviewBatchRequest(BaseModel):
+    items: list[ReviewItem]
+
+
+class ReviewBatchReply(BaseModel):
+    batch: TrainingBatchOut
+    mistakes_updated: int = 0  # 本次新进错题本题数
+
+
+class AdminBatchListItem(BaseModel):
+    """管理员视角的批次列表项。"""
+
+    id: int
+    user_id: int
+    username: str = ""
+    category_id: int
+    category_name: str = ""
+    status: str
+    question_count: int = 0
+    reviewed_count: int = 0  # 已判定题数
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
