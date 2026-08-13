@@ -10,6 +10,7 @@
     master(达标) mastery >= master_threshold
 """
 from datetime import datetime
+import json
 
 from sqlalchemy.orm import Session
 
@@ -127,15 +128,16 @@ def ensure_skills_from_knowledge(
 ) -> int:
     """把知识点清单同步到 skill 表（同名跳过，避免重复）。
 
-    返回新增数。材料 ID 记录来源；AI 提炼时 version 递增由调用方处理。
+    返回新增数。名称截断到 32 字符；AI 提炼的记录来源材料 ID。
     """
     created = 0
     existing = {
         s.name
         for s in db.query(Skill).filter(Skill.category_id == category_id).all()
     }
+    material_ids_json = json.dumps(material_ids)
     for name in skill_names:
-        name = (name or "").strip()
+        name = (name or "").strip()[:32]
         if not name or name in existing:
             continue
         db.add(
@@ -144,7 +146,7 @@ def ensure_skills_from_knowledge(
                 name=name,
                 description="",
                 source="ai",
-                source_material_ids="[]",
+                source_material_ids=material_ids_json,
             )
         )
         existing.add(name)

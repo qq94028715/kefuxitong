@@ -121,8 +121,13 @@ def plan_batch(db: Session, user_id: int, category_id: int, size: int = 20) -> l
     size = max(1, min(size, len(all_qs)))
     n_mistake = min(len(mistake_ids), round(size * settings.adaptive_mistake_ratio))
     n_weak = min(len(weak_pool), round(size * settings.adaptive_weak_ratio))
-    n_upgrade = min(len(upgrade_pool), round(size * settings.adaptive_consolidate_ratio))
-    rest = size - n_mistake - n_weak - n_upgrade
+    # upgrade 受剩余额度限制（配比取整可能使 sum > size，避免负 rest）
+    n_upgrade = min(
+        len(upgrade_pool),
+        round(size * settings.adaptive_consolidate_ratio),
+        max(0, size - n_mistake - n_weak),
+    )
+    rest = max(0, size - n_mistake - n_weak - n_upgrade)
 
     chosen_mistake = mistake_ids[:n_mistake]
     chosen_weak = _shuffle_take(weak_pool, n_weak)

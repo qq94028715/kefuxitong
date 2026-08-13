@@ -388,9 +388,38 @@ def create_category(
 
 @app.delete("/api/admin/categories/{cat_id}")
 def delete_category(cat_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """删除分类：级联清理材料/知识/题目/知识点/掌握度，避免孤儿数据。
+
+    SQLite 不强制外键，历史 chat_session 的 category_id 会悬空（保留会话记录）。
+    """
     cat = db.query(Category).filter(Category.id == cat_id).first()
     if not cat:
         raise HTTPException(status_code=404, detail="分类不存在")
+    # 该品类题目及其关联（批内题/错题本）
+    qids = [
+        q.id for q in db.query(Question).filter(Question.category_id == cat_id).all()
+    ]
+    if qids:
+        db.query(BatchQuestion).filter(
+            BatchQuestion.question_id.in_(qids)
+        ).delete(synchronize_session=False)
+        db.query(MistakeLog).filter(
+            MistakeLog.question_id.in_(qids)
+        ).delete(synchronize_session=False)
+        db.query(Question).filter(Question.id.in_(qids)).delete(
+            synchronize_session=False
+        )
+    # 该品类知识点及其掌握度
+    skill_ids = [
+        s.id for s in db.query(Skill).filter(Skill.category_id == cat_id).all()
+    ]
+    if skill_ids:
+        db.query(SkillMastery).filter(
+            SkillMastery.skill_id.in_(skill_ids)
+        ).delete(synchronize_session=False)
+        db.query(Skill).filter(Skill.id.in_(skill_ids)).delete(
+            synchronize_session=False
+        )
     db.delete(cat)  # 级联删除材料与知识
     db.commit()
     return {"detail": "已删除"}
