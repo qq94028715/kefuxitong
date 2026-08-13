@@ -7,6 +7,7 @@ v0.3 核心升级：Intent 三层路由 + 流式输出。
 """
 import json
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -838,6 +839,8 @@ def _clean_chat(raw_text: str) -> tuple[str, str]:
     2. 规则识别角色（客服名含"旗舰店"前缀）
     3. 过滤系统消息、自动回复
     4. 合并连续同角色消息
+    5. 隐私脱敏：发送者昵称不输出（仅角色前缀），消息内容中引用的
+       昵称统一替换为「客户N/客服N」，手机号打码（保留前3后4）
     """
     lines = raw_text.replace("\r\n", "\n").split("\n")
     lines = [ln.strip() for ln in lines if ln.strip()]
@@ -885,6 +888,41 @@ def _clean_chat(raw_text: str) -> tuple[str, str]:
                     messages_raw.append((nick, content))
         i += 1
 
+    # ---- 隐私脱敏：昵称 → 客户N/客服N 映射（内容中的引用也替换）----
+    # 1) 判定每个发送者昵称的角色
+    nick_to_role = {}
+    for nick, _ in messages_raw:
+        if nick not in nick_to_role:
+            nick_to_role[nick] = "客服" if any(p in nick for p in _AGENT_PATTERNS) else "客户"
+    # 2) 分配脱敏名（同一昵称全程一致；首个客服 = "客服"，其余编号）
+    customer_no = 0
+    agent_no = 0
+    nick_map: dict[str, str] = {}
+    for nick, role in nick_to_role.items():
+        if role == "客服":
+            agent_no += 1
+            nick_map[nick] = "客服" if agent_no == 1 else f"客服{agent_no}"
+        else:
+            customer_no += 1
+            nick_map[nick] = f"客户{customer_no}"
+    # 3) 补充：去掉"旗舰店:"前缀的客服名也映射到同一脱敏名（内容里可能只引用后半段）
+    for nick, masked in list(nick_map.items()):
+        short = nick.split(":")[-1].strip()
+        if short and short != nick and short not in nick_map:
+            nick_map[short] = masked
+    # 长昵称优先替换，避免短昵称误伤长昵称
+    ordered_nicks = sorted((n for n in nick_map if n), key=len, reverse=True)
+
+    def desensitize(text: str) -> str:
+        for nick in ordered_nicks:
+            if nick in text:
+                text = text.replace(nick, nick_map[nick])
+        # 手机号打码：保留前3后4（如 138****5678）
+        text = re.sub(
+            r"(?<!\d)(1[3-9]\d)\d{4}(\d{4})(?!\d)", r"\1****\2", text
+        )
+        return text
+
     # 过滤 + 合并
     merged = []
     for nick, content in messages_raw:
@@ -900,10 +938,9 @@ def _clean_chat(raw_text: str) -> tuple[str, str]:
             content = "[图片/文件]"
 
         # 判断角色
-        is_agent = any(pat in nick for pat in _AGENT_PATTERNS)
-        role = "客服" if is_agent else "客户"
-        # 取简洁角色名前缀
-        name = nick.split(":")[0].split("旗舰店:")[0].strip()
+        role = nick_to_role.get(nick, "客户")
+        # 脱敏：内容中的昵称引用替换 + 手机号打码
+        content = desensitize(content)
         line = f"{role}：{content}"
 
         if merged and merged[-1][0] == role:
