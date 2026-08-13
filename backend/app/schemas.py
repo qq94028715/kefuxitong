@@ -273,6 +273,13 @@ class QuestionSyncReply(BaseModel):
     total: int  # 该品类题目总数
 
 
+class QuestionBindSkill(BaseModel):
+    """题目绑定知识点（v0.8 补：旧题手动归类入口）。"""
+
+    skill_id: Optional[int] = None  # None = 解绑
+    difficulty: Optional[str] = None  # easy / medium / hard
+
+
 class BatchStartRequest(BaseModel):
     """客服开新批请求。"""
 

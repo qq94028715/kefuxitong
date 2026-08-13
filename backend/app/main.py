@@ -84,6 +84,7 @@ from .schemas import (
     MaterialUpdate,
     MessageOut,
     QuestionOut,
+    QuestionBindSkill,
     QuestionSyncReply,
     ReviewBatchReply,
     ReviewBatchRequest,
@@ -1107,6 +1108,40 @@ def sync_questions_api(
     created = batch_svc.sync_questions(db, category_id)
     total = db.query(Question).filter(Question.category_id == category_id).count()
     return QuestionSyncReply(created=created, total=total)
+
+
+@app.put("/api/admin/questions/{qid}/bind-skill", response_model=QuestionOut)
+def bind_question_skill(
+    qid: int,
+    req: QuestionBindSkill,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """题目绑定/解绑知识点 + 设置难度（v0.8 补：旧题手动归类入口）。
+
+    skill_id 为空 = 解绑；difficulty 仅接受 easy/medium/hard。
+    """
+    q = db.query(Question).filter(Question.id == qid).first()
+    if not q:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    if req.skill_id is not None:
+        s = (
+            db.query(Skill)
+            .filter(Skill.id == req.skill_id, Skill.category_id == q.category_id)
+            .first()
+        )
+        if not s:
+            raise HTTPException(
+                status_code=400, detail="知识点不存在或不属于该品类"
+            )
+        q.skill_id = s.id
+    else:
+        q.skill_id = None
+    if req.difficulty in ("easy", "medium", "hard"):
+        q.difficulty = req.difficulty
+    db.commit()
+    db.refresh(q)
+    return _question_out(q)
 
 
 @app.get("/api/admin/batches", response_model=list[AdminBatchListItem])

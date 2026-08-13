@@ -168,6 +168,8 @@ export const listQuestions = (categoryId) =>
   http.get('/admin/questions', { params: { category_id: categoryId } })
 export const syncQuestions = (categoryId) =>
   http.post('/admin/questions/sync', null, { params: { category_id: categoryId } })
+export const bindQuestionSkill = (qid, data) =>
+  http.put(`/admin/questions/${qid}/bind-skill`, data)
 export const listAdminBatches = (params = {}) =>
   http.get('/admin/batches', { params })
 export const getAdminBatch = (id) => http.get(`/admin/batches/${id}`)

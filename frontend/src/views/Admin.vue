@@ -634,13 +634,26 @@
 
           <table v-if="questions.length">
             <thead>
-              <tr><th>ID</th><th>题目</th><th>客户场景</th><th>来源</th><th>创建时间</th></tr>
+              <tr><th>ID</th><th>题目</th><th>客户场景</th><th>知识点</th><th>难度</th><th>来源</th><th>创建时间</th></tr>
             </thead>
             <tbody>
               <tr v-for="q in questions" :key="q.id">
                 <td>{{ q.id }}</td>
                 <td><strong>{{ q.title }}</strong></td>
-                <td class="muted" style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ q.scenario || '-' }}</td>
+                <td class="muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ q.scenario || '-' }}</td>
+                <td>
+                  <select class="input" style="min-width:120px" :value="q.skill_id || ''" @change="onBindSkill(q, $event.target.value)">
+                    <option value="">未归类</option>
+                    <option v-for="s in skills" :key="s.id" :value="s.id">{{ s.name }}</option>
+                  </select>
+                </td>
+                <td>
+                  <select class="input" style="min-width:70px" :value="q.difficulty || 'medium'" @change="onBindDiff(q, $event.target.value)">
+                    <option value="easy">易</option>
+                    <option value="medium">中</option>
+                    <option value="hard">难</option>
+                  </select>
+                </td>
                 <td>
                   <span class="tag" :class="q.source_type === 'ai' ? 'warn' : 'gray'">
                     {{ q.source_type === 'ai' ? 'AI 衍生' : '上传语料' }}
@@ -1295,6 +1308,7 @@ async function onDeleteSkill(s) {
 // ---------- 题库管理（v0.7） ----------
 const qCatId = ref(null)
 const questions = ref([])
+const skills = ref([]) // 当前品类的知识点（绑定下拉用）
 const syncingQ = ref(false)
 const syncMsg = ref('')
 
@@ -1305,11 +1319,28 @@ function onTabQuestions() {
 }
 async function loadQuestions() {
   if (!qCatId.value) return
+  const [qRes, sRes] = await Promise.all([
+    listQuestions(qCatId.value),
+    listSkills(qCatId.value),
+  ])
+  questions.value = qRes.data
+  skills.value = sRes.data
+}
+async function onBindSkill(q, skillId) {
   try {
-    const { data } = await listQuestions(qCatId.value)
-    questions.value = data
+    const { data } = await bindQuestionSkill(q.id, { skill_id: skillId ? Number(skillId) : null })
+    q.skill_id = data.skill_id
+    q.skill_name = data.skill_name
   } catch (e) {
-    alert(e.response?.data?.detail || '加载题库失败')
+    alert(e.response?.data?.detail || '绑定知识点失败')
+  }
+}
+async function onBindDiff(q, difficulty) {
+  try {
+    const { data } = await bindQuestionSkill(q.id, { difficulty })
+    q.difficulty = data.difficulty
+  } catch (e) {
+    alert(e.response?.data?.detail || '设置难度失败')
   }
 }
 async function onSyncQuestions() {
@@ -1318,10 +1349,10 @@ async function onSyncQuestions() {
   syncMsg.value = ''
   try {
     const { data } = await syncQuestions(qCatId.value)
-    syncMsg.value = `同步完成：新建 ${data.created} 题，题库共 ${data.total} 题`
+    syncMsg.value = data.created > 0 ? `已新建 ${data.created} 道题，当前共 ${data.total} 道` : `题目已是最新，共 ${data.total} 道`
     await loadQuestions()
   } catch (e) {
-    alert(e.response?.data?.detail || '同步题库失败')
+    syncMsg.value = e.response?.data?.detail || '同步失败'
   } finally {
     syncingQ.value = false
   }
