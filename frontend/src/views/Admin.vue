@@ -18,6 +18,7 @@
           <div class="tab" :class="{ active: tab === 'trend' }" @click="onTabTrend">成绩趋势</div>
           <div class="tab" :class="{ active: tab === 'batches' }" @click="onTabBatches">训练管理</div>
           <div class="tab" :class="{ active: tab === 'questions' }" @click="onTabQuestions">题库管理</div>
+          <div class="tab" :class="{ active: tab === 'mastery' }" @click="onTabMastery">掌握度</div>
           <div class="tab" :class="{ active: tab === 'import' }" @click="tab = 'import'">导入语料</div>
         </div>
 
@@ -651,6 +652,84 @@
           </table>
           <div v-else class="empty">该品类暂无题目，请先在「导入语料」粘贴聊天记录，再点「同步题目」</div>
         </div>
+
+        <!-- 掌握度看板 + 知识点管理（v0.8） -->
+        <div v-if="tab === 'mastery'">
+          <div class="row" style="margin-bottom:6px">
+            <div class="field" style="flex:1;margin-bottom:0">
+              <label>选择训练分类</label>
+              <select class="input" v-model="masteryCatId" @change="loadMasteryOverview">
+                <option v-for="c in cats" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+            </div>
+            <button class="btn ghost" @click="loadMasteryOverview" style="align-self:flex-end">刷新</button>
+          </div>
+
+          <!-- 薄弱知识点排行 -->
+          <div v-if="overview && overview.weak_ranking.length" style="margin-top:16px">
+            <div class="section-title">薄弱知识点排行（平均掌握度从低到高）</div>
+            <table>
+              <thead><tr><th>知识点</th><th>平均掌握度</th><th>薄弱人数</th></tr></thead>
+              <tbody>
+                <tr v-for="w in overview.weak_ranking" :key="w.skill_id">
+                  <td><strong>{{ w.skill_name }}</strong></td>
+                  <td><span class="tag" :class="w.avg_mastery < 50 ? 'warn' : 'ok'">{{ w.avg_mastery }}%</span></td>
+                  <td>{{ w.weak_count }} 人</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 团队掌握度矩阵 -->
+          <div v-if="overview && overview.rows.length" style="margin-top:16px">
+            <div class="section-title">团队掌握度矩阵（客服 × 知识点）</div>
+            <div style="overflow-x:auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>客服</th>
+                    <th v-for="s in overview.skills" :key="s.id" :title="s.name">{{ s.name }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="agent in overview.agents" :key="agent.id">
+                    <td><strong>{{ agent.name }}</strong></td>
+                    <td v-for="s in overview.skills" :key="s.id">
+                      <span class="tag" :class="cellClass(getMastery(agent.id, s.id))">{{ getMastery(agent.id, s.id) }}%</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 知识点管理 -->
+          <div style="margin-top:24px">
+            <div class="section-title">知识点管理（AI 提炼 + 手工维护）</div>
+            <div class="row" style="margin-bottom:10px">
+              <input class="input" v-model="skillForm.name" placeholder="知识点名，如：报价计算" style="flex:1" />
+              <input class="input" v-model="skillForm.description" placeholder="考察内容说明（可选）" style="flex:2" />
+              <button class="btn" :disabled="!skillForm.name.trim()" @click="onCreateSkill">添加</button>
+            </div>
+            <table v-if="overview && overview.skills.length">
+              <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>来源</th><th>绑定题数</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr v-for="s in overview.skills" :key="s.id">
+                  <td>{{ s.id }}</td>
+                  <td><strong>{{ s.name }}</strong></td>
+                  <td class="muted">{{ s.description || '-' }}</td>
+                  <td><span class="tag" :class="s.source === 'ai' ? 'gray' : 'ok'">{{ s.source === 'ai' ? 'AI 提炼' : '手工' }}</span></td>
+                  <td>{{ s.question_count }}</td>
+                  <td>
+                    <button class="btn ghost sm" @click="onEditSkill(s)">改</button>
+                    <button class="btn ghost sm" @click="onDeleteSkill(s)">删</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="empty">该品类还没有知识点，可在上方手动添加，或提取知识库后自动生成。</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -669,6 +748,7 @@ import {
   importChat,
   listAdminBatches, getAdminBatch, reviewBatch,
   listQuestions, syncQuestions,
+  listSkills, createSkill, updateSkill, deleteSkill, masteryOverview,
 } from '../api.js'
 
 const router = useRouter()
@@ -1151,6 +1231,64 @@ async function onSubmitReview() {
     alert(e.response?.data?.detail || '提交判定失败')
   } finally {
     reviewing.value = false
+  }
+}
+
+// ---------- 掌握度看板 + 知识点管理（v0.8） ----------
+const masteryCatId = ref(null)
+const overview = ref(null)
+const skillForm = reactive({ name: '', description: '' })
+
+function onTabMastery() {
+  tab.value = 'mastery'
+  if (!masteryCatId.value && matCatId.value) masteryCatId.value = matCatId.value
+  loadMasteryOverview()
+}
+async function loadMasteryOverview() {
+  if (!masteryCatId.value) return
+  try {
+    const { data } = await masteryOverview(masteryCatId.value)
+    overview.value = data
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载掌握度失败')
+  }
+}
+function getMastery(agentId, skillId) {
+  const r = (overview.value?.rows || []).find(
+    (x) => x.user_id === agentId && x.skill_id === skillId
+  )
+  return r ? r.mastery : 0
+}
+function cellClass(v) {
+  if (v >= 80) return 'ok'
+  if (v >= 50) return ''
+  return 'warn'
+}
+async function onCreateSkill() {
+  if (!masteryCatId.value) return alert('请先选择分类')
+  try {
+    await createSkill(masteryCatId.value, { ...skillForm })
+    skillForm.name = ''
+    skillForm.description = ''
+    await loadMasteryOverview()
+  } catch (e) {
+    alert(e.response?.data?.detail || '创建知识点失败')
+  }
+}
+function onEditSkill(s) {
+  const name = prompt('知识点名', s.name)
+  if (name === null) return
+  updateSkill(s.id, { name: name.trim() || undefined })
+    .then(loadMasteryOverview)
+    .catch((e) => alert(e.response?.data?.detail || '更新失败'))
+}
+async function onDeleteSkill(s) {
+  if (!confirm(`删除知识点「${s.name}」？关联题目的知识点标记将被清空。`)) return
+  try {
+    await deleteSkill(s.id)
+    await loadMasteryOverview()
+  } catch (e) {
+    alert(e.response?.data?.detail || '删除失败')
   }
 }
 

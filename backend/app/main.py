@@ -20,7 +20,8 @@ from starlette.responses import StreamingResponse
 
 from . import batch as batch_svc
 from .ai import cache as reply_cache
-from .ai import llm
+from .ai import llm, mastery as mastery_svc
+from .ai.adaptive import plan_batch
 from .ai.evaluator import evaluate_session
 from .ai.parser import parse_file, SUPPORTED_EXTENSIONS
 from .ai.knowledge import (
@@ -50,6 +51,8 @@ from .models import (
     MistakeLog,
     Question,
     Score,
+    Skill,
+    SkillMastery,
     TrainingBatch,
     User,
 )
@@ -72,6 +75,9 @@ from .schemas import (
     FinishReply,
     KnowledgeOut,
     LoginRequest,
+    MasteryListResponse,
+    MasteryOut,
+    MasteryOverviewResponse,
     MaterialDetailOut,
     MaterialOut,
     MaterialUpdate,
@@ -88,6 +94,9 @@ from .schemas import (
     SendMessageRequest,
     SessionCreateRequest,
     SessionOut,
+    SkillCreate,
+    SkillOut,
+    SkillUpdate,
     StartQuestionReply,
     TokenResponse,
     TrainingBatchOut,
@@ -215,13 +224,28 @@ def init_db():
                 k.set_content(DEFAULT_KNOWLEDGE[name])
                 k.set_source_ids([])
                 db.add(k)
+            # v0.8：写入示例知识点（从示例知识的 required_questions + key_knowledge 生成）
+            _seed_skills(db, cat.id, DEFAULT_KNOWLEDGE.get(name, {}))
         db.commit()
     finally:
         db.close()
 
 
+def _seed_skills(db: Session, category_id: int, knowledge: dict) -> None:
+    """从知识 JSON 生成示例知识点（required_questions + 部分 key_knowledge）。"""
+    names = list(knowledge.get("required_questions") or [])
+    for kn in (knowledge.get("key_knowledge") or [])[:3]:
+        if isinstance(kn, str):
+            names.append(kn[:20])
+    mastery_svc.ensure_skills_from_knowledge(db, category_id, names, [])
+
+
 def _migrate_legacy_columns():
-    """轻量迁移：旧库 chat_session 无 batch_question_id 列时补列（不删库）。"""
+    """轻量迁移：旧库补列（不删库）。
+
+    v0.7: chat_session.batch_question_id
+    v0.8: question.skill_id / difficulty / related_skill_ids
+    """
     try:
         if "chat_session" not in inspect(engine).get_table_names():
             return
@@ -234,6 +258,32 @@ def _migrate_legacy_columns():
                 conn.commit()
     except Exception as e:  # 迁移失败不阻塞启动
         logging.getLogger(__name__).warning("chat_session 迁移失败: %s", e)
+
+    # v0.8: question 补列
+    try:
+        if "question" not in inspect(engine).get_table_names():
+            return
+        cols = [c["name"] for c in inspect(engine).get_columns("question")]
+        with engine.connect() as conn:
+            if "skill_id" not in cols:
+                conn.execute(text("ALTER TABLE question ADD COLUMN skill_id INTEGER"))
+            if "difficulty" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE question ADD COLUMN difficulty "
+                        "VARCHAR(16) DEFAULT 'medium'"
+                    )
+                )
+            if "related_skill_ids" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE question ADD COLUMN related_skill_ids "
+                        "TEXT DEFAULT '[]'"
+                    )
+                )
+            conn.commit()
+    except Exception as e:  # 迁移失败不阻塞启动
+        logging.getLogger(__name__).warning("question 迁移失败: %s", e)
 
 
 @asynccontextmanager
@@ -548,6 +598,207 @@ def extract(
         version=k.version,
         used_llm=used_llm,
         message=msg,
+    )
+
+
+# ---------- 知识点管理（v0.8 掌握度引擎） ----------
+
+
+@app.get("/api/admin/skills", response_model=list[SkillOut])
+def list_skills(
+    category_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """品类下知识点列表（含绑定题数）。"""
+    cat = db.query(Category).filter(Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    result = []
+    for s in (
+        db.query(Skill)
+        .filter(Skill.category_id == category_id)
+        .order_by(Skill.id)
+        .all()
+    ):
+        q_count = db.query(Question).filter(Question.skill_id == s.id).count()
+        result.append(
+            SkillOut(
+                id=s.id, category_id=s.category_id, name=s.name,
+                description=s.description, source=s.source,
+                question_count=q_count, created_at=s.created_at,
+            )
+        )
+    return result
+
+
+@app.post("/api/admin/skills", response_model=SkillOut)
+def create_skill(
+    category_id: int,
+    req: SkillCreate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """新建知识点（手工维护，source=manual）。"""
+    cat = db.query(Category).filter(Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="知识点名不能为空")
+    dup = (
+        db.query(Skill)
+        .filter(Skill.category_id == category_id, Skill.name == name)
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=400, detail="同名知识点已存在")
+    s = Skill(
+        category_id=category_id, name=name,
+        description=req.description, source="manual",
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return SkillOut(
+        id=s.id, category_id=s.category_id, name=s.name,
+        description=s.description, source=s.source,
+        question_count=0, created_at=s.created_at,
+    )
+
+
+@app.put("/api/admin/skills/{skill_id}", response_model=SkillOut)
+def update_skill(
+    skill_id: int,
+    req: SkillUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """改知识点名/描述。"""
+    s = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="知识点不存在")
+    if req.name is not None:
+        name = req.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="知识点名不能为空")
+        dup = (
+            db.query(Skill)
+            .filter(
+                Skill.category_id == s.category_id,
+                Skill.name == name,
+                Skill.id != s.id,
+            )
+            .first()
+        )
+        if dup:
+            raise HTTPException(status_code=400, detail="同名知识点已存在")
+        s.name = name
+    if req.description is not None:
+        s.description = req.description
+    db.commit()
+    db.refresh(s)
+    q_count = db.query(Question).filter(Question.skill_id == s.id).count()
+    return SkillOut(
+        id=s.id, category_id=s.category_id, name=s.name,
+        description=s.description, source=s.source,
+        question_count=q_count, created_at=s.created_at,
+    )
+
+
+@app.delete("/api/admin/skills/{skill_id}")
+def delete_skill(
+    skill_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """删除知识点：关联题主知识点置 NULL，掌握度记录删除。"""
+    s = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="知识点不存在")
+    for q in db.query(Question).filter(Question.skill_id == s.id).all():
+        q.skill_id = None
+    db.query(SkillMastery).filter(SkillMastery.skill_id == s.id).delete()
+    db.delete(s)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/mastery-overview", response_model=MasteryOverviewResponse)
+def mastery_overview(
+    category_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """团队掌握度看板：客服×知识点矩阵 + 薄弱知识点排行。"""
+    cat = db.query(Category).filter(Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    skills = (
+        db.query(Skill)
+        .filter(Skill.category_id == category_id)
+        .order_by(Skill.id)
+        .all()
+    )
+    agents = (
+        db.query(User).filter(User.role == "agent").order_by(User.id).all()
+    )
+    skill_info = [
+        SkillOut(
+            id=s.id, category_id=s.category_id, name=s.name,
+            description=s.description, source=s.source,
+            question_count=db.query(Question).filter(Question.skill_id == s.id).count(),
+            created_at=s.created_at,
+        )
+        for s in skills
+    ]
+    agents_info = [{"id": u.id, "name": u.username} for u in agents]
+
+    rows = []
+    skill_ids = [s.id for s in skills]
+    if skill_ids:
+        mastery_rows = (
+            db.query(SkillMastery)
+            .filter(SkillMastery.skill_id.in_(skill_ids))
+            .all()
+        )
+        m_map = {(r.user_id, r.skill_id): r for r in mastery_rows}
+        name_by_id = {s.id: s.name for s in skills}
+        for u in agents:
+            for sid in skill_ids:
+                r = m_map.get((u.id, sid))
+                rows.append(
+                    {
+                        "user_id": u.id,
+                        "username": u.username,
+                        "skill_id": sid,
+                        "skill_name": name_by_id[sid],
+                        "mastery": r.mastery if r else 0.0,
+                        "status": r.status if r else "weak",
+                    }
+                )
+
+    weak_ranking = []
+    for s in skills:
+        vals = [r["mastery"] for r in rows if r["skill_id"] == s.id]
+        avg = round(sum(vals) / len(vals), 1) if vals else 0.0
+        weak_cnt = sum(
+            1 for r in rows if r["skill_id"] == s.id and r["status"] == "weak"
+        )
+        weak_ranking.append(
+            {
+                "skill_id": s.id,
+                "skill_name": s.name,
+                "avg_mastery": avg,
+                "weak_count": weak_cnt,
+            }
+        )
+    weak_ranking.sort(key=lambda x: (x["avg_mastery"], -x["weak_count"]))
+
+    return MasteryOverviewResponse(
+        category_id=category_id, category_name=cat.name,
+        skills=skill_info, agents=agents_info,
+        rows=rows, weak_ranking=weak_ranking,
     )
 
 
@@ -1047,6 +1298,48 @@ def list_categories_agent(_: User = Depends(require_agent), db: Session = Depend
     return _categories_with_count(db)
 
 
+@app.get("/api/agent/mastery", response_model=MasteryListResponse)
+def agent_mastery(
+    category_id: int,
+    user: User = Depends(require_agent),
+    db: Session = Depends(get_db),
+):
+    """客服个人掌握度图谱（某品类，按掌握度升序）。"""
+    cat = db.query(Category).filter(Category.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="分类不存在")
+    skills = (
+        db.query(Skill)
+        .filter(Skill.category_id == category_id)
+        .order_by(Skill.id)
+        .all()
+    )
+    m_map = mastery_svc.skill_mastery_map(db, user.id, category_id)
+    items = []
+    for s in skills:
+        r = m_map.get(s.id)
+        items.append(
+            MasteryOut(
+                skill_id=s.id,
+                skill_name=s.name,
+                mastery=r.mastery if r else 0.0,
+                status=r.status if r else "weak",
+                attempt_count=r.attempt_count if r else 0,
+                reject_count=r.reject_count if r else 0,
+                last_judged_at=r.last_judged_at if r else None,
+            )
+        )
+    items.sort(key=lambda x: x.mastery)
+    return MasteryListResponse(
+        category_id=category_id,
+        category_name=cat.name,
+        items=items,
+        weak_count=sum(1 for i in items if i.status == "weak"),
+        pass_count=sum(1 for i in items if i.status == "pass"),
+        master_count=sum(1 for i in items if i.status == "master"),
+    )
+
+
 # ---------- 错题本批次训练（v0.7） ----------
 
 
@@ -1534,10 +1827,13 @@ def _session_question_script(db: Session, session) -> str:
 
 def _question_out(q: Question) -> QuestionOut:
     cat_name = q.category.name if q.category else ""
+    skill_name = q.skill.name if q.skill else ""
     return QuestionOut(
         id=q.id, category_id=q.category_id, category_name=cat_name,
         title=q.title, scenario=q.scenario, script_text=q.script_text,
         source_type=q.source_type, source_material_id=q.source_material_id,
+        skill_id=q.skill_id, skill_name=skill_name,
+        difficulty=q.difficulty or "medium",
         created_at=q.created_at,
     )
 

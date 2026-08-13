@@ -1,20 +1,22 @@
-"""训练批次服务（错题本闭环，v0.7）。
+"""训练批次服务（错题本闭环 v0.7 + 自适应出题 v0.8）。
 
 核心机制：
 - 题库 = 该品类已上传的 sales 聊天记录自动转题目（sync_questions）
-- 组卷：错题本未解决题「间隔型」均匀混入 + 题库随机补齐，默认一批 20 题
+- 组卷（v0.8）：adaptive.plan_batch 自适应选题——错题重练 20% + 薄弱点 50% +
+  难度升级 20% + 新题 10%，错题按间隔均匀分散，默认一批 20 题
 - 批次状态机：in_progress → awaiting_review（20 题练完） → reviewed（主管判定完）
-- 判定：不合适 → 进错题本（appear_count+1）；合适 → 解错题（resolved_at 置位）
+- 判定：不合适 → 进错题本（appear_count+1）+ 主知识点掌握度按 EMA 扣分；
+  合适 → 解错题（resolved_at 置位）+ 主知识点掌握度按 EMA 加分
 
 设计约束：
 - 不删旧库：新表由 create_all 建，chat_session.batch_question_id 由 main.init_db 迁移
-- 错题按间隔均匀分散，不连续出现（类似错题本，避免连刷同一题）
+- 错题按间隔均匀分散，不连续出现（避免连刷同一题）
 """
-import random
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from .ai import adaptive, mastery
 from .models import (
     BatchQuestion,
     ChatSession,
@@ -25,7 +27,6 @@ from .models import (
 )
 
 BATCH_SIZE = 20  # 每批题数（默认 20 题）
-MISTAKE_PER_BATCH = 5  # 每批混入错题数上限（25%）
 MIN_QUESTIONS_TO_START = 1  # 题库至少多少题才能开批
 
 
@@ -96,39 +97,12 @@ def _make_scenario(text: str) -> str:
 
 
 def create_batch(db: Session, user_id: int, category_id: int) -> TrainingBatch:
-    """开新批：错题间隔混入 + 题库补齐，默认一批 20 题。
+    """开新批：自适应组卷（v0.8），默认一批 20 题。
 
     Raises: ValueError 当该品类题库为空。
     """
     sync_questions(db, category_id)
-
-    # 1) 错题本未解决题目（该品类）
-    mistake_qids = [
-        ml.question_id
-        for ml in (
-            db.query(MistakeLog)
-            .join(Question, MistakeLog.question_id == Question.id)
-            .filter(
-                MistakeLog.user_id == user_id,
-                MistakeLog.resolved_at.is_(None),
-                Question.category_id == category_id,
-            )
-            .all()
-        )
-    ]
-
-    # 2) 备选题：该品类全部题目
-    all_qs = db.query(Question).filter(Question.category_id == category_id).all()
-    if len(all_qs) < MIN_QUESTIONS_TO_START:
-        raise ValueError("该品类暂无训练题目，请先在「导入语料」上传聊天记录")
-
-    # 3) 组卷：错题取前 N 道（不重复），其余随机补齐，错题均匀分散
-    n = min(len(mistake_qids), MISTAKE_PER_BATCH)
-    chosen = mistake_qids[:n]
-    pool = [q.id for q in all_qs if q.id not in chosen]
-    random.shuffle(pool)
-    fill = pool[: max(0, BATCH_SIZE - n)]
-    question_ids = _interleave_mistakes(chosen, fill)
+    question_ids = adaptive.plan_batch(db, user_id, category_id, size=BATCH_SIZE)
 
     batch = TrainingBatch(
         user_id=user_id,
@@ -143,32 +117,6 @@ def create_batch(db: Session, user_id: int, category_id: int) -> TrainingBatch:
     db.commit()
     db.refresh(batch)
     return batch
-
-
-def _interleave_mistakes(mistakes: list[int], fill: list[int]) -> list[int]:
-    """把错题按等间距均匀分散到题目序列中，避免连续出现。
-
-    mistakes: 错题 id（混入）
-    fill: 普通题 id（补齐）
-    返回按展示顺序排列的题目 id 列表。
-    """
-    total = len(mistakes) + len(fill)
-    if not mistakes or not fill:
-        return mistakes + fill
-    positions = set()
-    step = total / len(mistakes)
-    for i in range(len(mistakes)):
-        positions.add(min(total - 1, int(round((i + 0.5) * step))))
-    result = []
-    mi, fi = 0, 0
-    for idx in range(total):
-        if idx in positions and mi < len(mistakes):
-            result.append(mistakes[mi])
-            mi += 1
-        else:
-            result.append(fill[fi])
-            fi += 1
-    return result
 
 
 # ---------- 练题 ----------
@@ -229,7 +177,7 @@ def is_mistake(db: Session, user_id: int, question_id: int) -> bool:
 
 
 def review_batch(db: Session, batch_id: int, items: list) -> int:
-    """主管判定批次内题目。
+    """主管判定批次内题目（v0.8：判定同步更新知识点掌握度）。
 
     items: [(question_id, passed: bool), ...]
     返回本次新进/累计错题本条目数（changed 数）。
@@ -250,6 +198,10 @@ def review_batch(db: Session, batch_id: int, items: list) -> int:
         else:
             _add_mistake(db, batch.user_id, bq.question_id)
             changed += 1
+        # v0.8：判定结果写回主知识点掌握度（EMA，驳回翻倍扣分）
+        q = db.query(Question).filter(Question.id == bq.question_id).first()
+        if q and q.skill_id:
+            mastery.record_judgment(db, batch.user_id, q.skill_id, passed)
     # 全部判定完 → reviewed
     if batch.items and all(bq.review_status != "pending" for bq in batch.items):
         batch.status = "reviewed"

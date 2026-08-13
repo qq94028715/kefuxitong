@@ -260,6 +260,9 @@ class QuestionOut(BaseModel):
     script_text: str = ""
     source_type: str = "uploaded"  # uploaded / ai
     source_material_id: Optional[int] = None
+    skill_id: Optional[int] = None  # 主知识点（v0.8）
+    skill_name: str = ""  # 主知识点名
+    difficulty: str = "medium"  # easy / medium / hard（v0.8）
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -363,3 +366,68 @@ class AdminBatchListItem(BaseModel):
     reviewed_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------- 知识点掌握度引擎（v0.8） ----------
+class SkillCreate(BaseModel):
+    """新建知识点。"""
+
+    name: str
+    description: str = ""
+
+
+class SkillUpdate(BaseModel):
+    """更新知识点。"""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class SkillOut(BaseModel):
+    """知识点视图。"""
+
+    id: int
+    category_id: int
+    name: str
+    description: str = ""
+    source: str = "ai"  # ai / manual
+    question_count: int = 0  # 绑定了多少道题（主知识点）
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MasteryOut(BaseModel):
+    """单个知识点的掌握度视图。"""
+
+    skill_id: int
+    skill_name: str = ""
+    mastery: float = 0.0  # 0~100
+    status: str = "weak"  # weak / pass / master
+    attempt_count: int = 0
+    reject_count: int = 0
+    last_judged_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MasteryListResponse(BaseModel):
+    """客服个人掌握度图谱（某品类）。"""
+
+    category_id: int
+    category_name: str = ""
+    items: list[MasteryOut] = []  # 按掌握度升序
+    weak_count: int = 0
+    pass_count: int = 0
+    master_count: int = 0
+
+
+class MasteryOverviewResponse(BaseModel):
+    """管理员团队掌握度看板（某品类）。"""
+
+    category_id: int
+    category_name: str = ""
+    skills: list[SkillOut] = []
+    agents: list[dict] = []  # [{"id","name"}]
+    rows: list[dict] = []  # [{user_id, username, skill_id, skill_name, mastery, status}]
+    weak_ranking: list[dict] = []  # 薄弱知识点排行 [{skill_id, skill_name, avg_mastery, weak_count}]

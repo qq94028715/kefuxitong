@@ -13,6 +13,11 @@ const routes = [
     component: () => import('./views/Train.vue'),
     meta: { role: 'agent' },
   },
+  {
+    path: '/mastery',
+    component: () => import('./views/Mastery.vue'),
+    meta: { role: 'agent' },
+  },
 ]
 
 const router = createRouter({

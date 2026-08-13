@@ -173,3 +173,15 @@ export const listAdminBatches = (params = {}) =>
 export const getAdminBatch = (id) => http.get(`/admin/batches/${id}`)
 export const reviewBatch = (id, items) =>
   http.post(`/admin/batches/${id}/review`, { items })
+
+// ---------- 知识点掌握度引擎（v0.8） ----------
+export const listSkills = (categoryId) =>
+  http.get('/admin/skills', { params: { category_id: categoryId } })
+export const createSkill = (categoryId, data) =>
+  http.post('/admin/skills', data, { params: { category_id: categoryId } })
+export const updateSkill = (id, data) => http.put(`/admin/skills/${id}`, data)
+export const deleteSkill = (id) => http.delete(`/admin/skills/${id}`)
+export const masteryOverview = (categoryId) =>
+  http.get('/admin/mastery-overview', { params: { category_id: categoryId } })
+export const agentMastery = (categoryId) =>
+  http.get('/agent/mastery', { params: { category_id: categoryId } })

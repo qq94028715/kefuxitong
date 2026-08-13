@@ -239,6 +239,11 @@ class Question(Base):
     - ai: AI 根据上传题生成的衍生题（二期）
 
     扮演时，AI 客户以 script_text 为蓝本衍生对话。
+
+    v0.8 掌握度引擎：
+    - skill_id: 主知识点（NULL = 未归类，旧题）
+    - difficulty: 易/中/难（自适应出题用）
+    - related_skill_ids: 关联知识点 id 列表（辅助信号，JSON）
     """
 
     __tablename__ = "question"
@@ -250,9 +255,19 @@ class Question(Base):
     scenario = Column(Text, default="")  # 客户场景/画像描述
     script_text = Column(Text, default="")  # 客户剧本（聊天记录原文 / 衍生文本）
     source_type = Column(String(16), default="uploaded")  # uploaded / ai
+    skill_id = Column(Integer, ForeignKey("skill.id"), nullable=True, index=True)  # 主知识点
+    difficulty = Column(String(16), default="medium")  # easy / medium / hard
+    related_skill_ids = Column(Text, default="[]")  # JSON: [skill_id, ...]
     created_at = Column(DateTime, default=datetime.utcnow)
 
     category = relationship("Category")
+    skill = relationship("Skill")
+
+    def get_related_skill_ids(self) -> list[int]:
+        return json.loads(self.related_skill_ids or "[]")
+
+    def set_related_skill_ids(self, ids: list[int]) -> None:
+        self.related_skill_ids = json.dumps(ids)
 
 
 class TrainingBatch(Base):
@@ -318,3 +333,67 @@ class MistakeLog(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "question_id", name="uq_mistake_user_question"),
     )
+
+
+# ===================== 知识点掌握度引擎（v0.8） =====================
+
+
+class Skill(Base):
+    """知识点（客服应掌握的能力项）。
+
+    来源两种：
+    - ai:     AI 从材料提炼知识时同步生成（source_material_ids 指向原材料）
+    - manual: 管理员手工维护
+
+    粒度：每品类 8~20 个（决策 #5）。
+    """
+
+    __tablename__ = "skill"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(
+        Integer, ForeignKey("category.id"), nullable=False, index=True
+    )
+    name = Column(String(64), nullable=False)  # 知识点名，如「报价计算」
+    description = Column(Text, default="")  # 考察内容说明
+    source = Column(String(16), default="ai")  # ai / manual
+    source_material_ids = Column(Text, default="[]")  # 提炼自哪些材料（JSON）
+    version = Column(Integer, default=1)  # 每次重新提炼自增（同 Knowledge 机制）
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("category_id", "name", name="uq_skill_category_name"),
+    )
+
+    category = relationship("Category")
+
+    def get_source_ids(self) -> list[int]:
+        return json.loads(self.source_material_ids or "[]")
+
+    def set_source_ids(self, ids: list[int]) -> None:
+        self.source_material_ids = json.dumps(ids)
+
+
+class SkillMastery(Base):
+    """用户 × 知识点掌握度（一人一知识点一行）。
+
+    mastery: 0~100 EMA 值（决策 #11：加权移动平均，新判定权重更高）
+    status: weak(薄弱) / pass(及格) / master(达标)（决策 #2，三档不判结业）
+    """
+
+    __tablename__ = "skill_mastery"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    skill_id = Column(Integer, ForeignKey("skill.id"), nullable=False, index=True)
+    mastery = Column(Float, default=0.0)  # 0~100
+    attempt_count = Column(Integer, default=0)  # 累计作答（判定）次数
+    reject_count = Column(Integer, default=0)  # 累计驳回次数
+    status = Column(String(16), default="weak")  # weak / pass / master
+    last_judged_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_id", name="uq_mastery_user_skill"),
+    )
+
+    skill = relationship("Skill")

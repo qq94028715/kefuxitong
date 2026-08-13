@@ -19,7 +19,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from ..models import Category, Knowledge
-from . import llm, prompt
+from . import llm, mastery, prompt
 from .trainer import (
     build_training_text,
     build_training_text_by_quality,
@@ -126,6 +126,13 @@ def extract_knowledge(db: Session, category_id: int) -> tuple[Knowledge, bool]:
     db.add(k)
     db.commit()
     db.refresh(k)
+
+    # v0.8：把提炼出的知识点清单同步到 skill 表（同名跳过）
+    skill_names = content.get("skills") or []
+    if skill_names:
+        mastery.ensure_skills_from_knowledge(
+            db, category_id, skill_names, all_material_ids
+        )
     return k, used_llm
 
 
@@ -227,6 +234,7 @@ def _extract_with_rules(text: str, category_name: str) -> dict:
         "failure_patterns": [],
         "sales_process": list(DEFAULT_SALES_PROCESS),
         "customer_profiles": [],
+        "skills": [f"{r}确认" for r in required] or ["需求确认"],
         "scoring_dimensions": dict(DEFAULT_SCORING_DIMENSIONS),
         "_note": "规则模式提取（未配置 LLM_API_KEY），质量有限。"
         "配置后重新提取可获得完整知识库（含成功/失败模式）。",

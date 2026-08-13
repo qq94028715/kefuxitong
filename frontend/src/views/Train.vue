@@ -12,8 +12,13 @@
       <div class="card">
         <!-- 入口：开新批 / 继续练 / 等待判定 -->
         <div v-if="!chatting">
-          <div class="page-title">错题本训练</div>
-          <div class="page-sub">每批 20 道客户情景题，AI 客户按真实聊天记录扮演。错题会间隔混入后续批次，直到主管判定合格。</div>
+          <div class="page-title-row">
+            <div>
+              <div class="page-title">错题本训练</div>
+              <div class="page-sub">每批 20 道客户情景题，AI 客户按真实聊天记录扮演。错题会间隔混入后续批次，直到主管判定合格。</div>
+            </div>
+            <button class="btn ghost sm" @click="router.push('/mastery')">查看掌握度</button>
+          </div>
 
           <!-- 批次状态条 -->
           <div v-if="progress.has_batch" class="batch-status">
@@ -74,7 +79,11 @@
               {{ session.status === 'completed' ? '已结束' : '训练中' }}
             </span>
           </div>
-          <div v-if="questionTitle" class="muted" style="margin:-8px 0 10px">{{ questionTitle }}</div>
+          <div v-if="questionTitle" class="muted" style="margin:-8px 0 10px">
+            {{ questionTitle }}
+            <span v-if="questionSkillName" class="tag" style="background:#3b82f6;color:#fff">{{ questionSkillName }}</span>
+            <span v-if="questionDifficulty" class="tag gray">{{ diffLabel(questionDifficulty) }}</span>
+          </div>
 
           <!-- 消息区 -->
           <div class="chat-box" ref="chatBox">
@@ -197,6 +206,8 @@ const seq = ref(0)
 const total = ref(0)
 const isMistake = ref(false)
 const questionTitle = ref('')
+const questionSkillName = ref('')
+const questionDifficulty = ref('')
 const doneCount = ref(0)
 const batchDone = ref(false)
 
@@ -249,6 +260,9 @@ function batchStatusClass(s) {
   if (s === 'reviewed') return 'ok'
   return ''
 }
+function diffLabel(d) {
+  return { easy: '易', medium: '中', hard: '难' }[d] || d
+}
 
 function logout() {
   localStorage.clear()
@@ -300,6 +314,8 @@ async function onNextQuestion() {
     total.value = data.total
     isMistake.value = data.is_mistake
     questionTitle.value = data.question.title
+    questionSkillName.value = data.question.skill_name || ''
+    questionDifficulty.value = data.question.difficulty || ''
     score.value = null
     batchDone.value = false
     inputText.value = ''
@@ -444,6 +460,12 @@ onMounted(async () => {
   border-radius: 8px;
   padding: 12px 14px;
   margin-bottom: 16px;
+}
+.page-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 .batch-status-row {
   display: flex;

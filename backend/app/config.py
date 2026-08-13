@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     min_dialogue_turns: int = 4  # 至少聊几轮才允许结束评分
     stream_delay: float = 0.03  # 逐字流式速度（秒/字符），可用 .env 覆盖，免重新部署
 
+    # ---------- 掌握度引擎（v0.8）----------
+    mastery_alpha: float = 0.3  # EMA 学习率（新判定权重），驳回时自动翻倍
+    mastery_pass_threshold: float = 50.0  # 及格线：mastery >= 该值 → pass
+    mastery_master_threshold: float = 80.0  # 达标线：mastery >= 该值 → master
+    # 自适应出题批内配比（20 题基准，比例和不足 100% 时按比例顺延）
+    adaptive_mistake_ratio: float = 0.2  # 错题重练
+    adaptive_weak_ratio: float = 0.5  # 薄弱点优先
+    adaptive_consolidate_ratio: float = 0.2  # 及格巩固（难度升级）
+    adaptive_new_ratio: float = 0.1  # 新题/随机巩固
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
