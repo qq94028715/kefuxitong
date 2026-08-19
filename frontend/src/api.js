@@ -187,3 +187,10 @@ export const masteryOverview = (categoryId) =>
   http.get('/admin/mastery-overview', { params: { category_id: categoryId } })
 export const agentMastery = (categoryId) =>
   http.get('/agent/mastery', { params: { category_id: categoryId } })
+
+// ---------- 快捷回复短语（v0.9） ----------
+export const listQuickReplies = () => http.get('/admin/quick-replies')
+export const createQuickReply = (data) => http.post('/admin/quick-replies', data)
+export const updateQuickReply = (id, data) => http.put(`/admin/quick-replies/${id}`, data)
+export const deleteQuickReply = (id) => http.delete(`/admin/quick-replies/${id}`)
+export const agentQuickReplies = () => http.get('/agent/quick-replies')

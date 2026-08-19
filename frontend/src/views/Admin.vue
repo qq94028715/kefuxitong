@@ -19,6 +19,7 @@
           <div class="tab" :class="{ active: tab === 'batches' }" @click="onTabBatches">训练管理</div>
           <div class="tab" :class="{ active: tab === 'questions' }" @click="onTabQuestions">题库管理</div>
           <div class="tab" :class="{ active: tab === 'mastery' }" @click="onTabMastery">掌握度</div>
+          <div class="tab" :class="{ active: tab === 'quick' }" @click="onTabQuick">快捷短语</div>
           <div class="tab" :class="{ active: tab === 'import' }" @click="tab = 'import'">导入语料</div>
         </div>
 
@@ -743,6 +744,40 @@
             <div v-else class="empty">该品类还没有知识点，可在上方手动添加，或提取知识库后自动生成。</div>
           </div>
         </div>
+
+        <!-- 快捷短语管理（v0.9） -->
+        <div v-if="tab === 'quick'">
+          <div class="section-title">快捷回复短语（客服训练时点选）</div>
+          <div class="row" style="margin-bottom:10px">
+            <input class="input" v-model="quickForm.content" placeholder="输入短语内容，如：好的，请问您需要什么规格？" style="flex:1" @keyup.enter="onCreateQuick" />
+            <button class="btn" :disabled="!quickForm.content.trim()" @click="onCreateQuick">添加</button>
+          </div>
+          <div v-if="quickList.length" class="muted" style="margin-bottom:8px">
+            共 {{ quickList.length }} 条，启用 {{ quickList.filter(q => q.is_active).length }} 条
+          </div>
+          <table v-if="quickList.length">
+            <thead>
+              <tr><th>排序</th><th>短语内容</th><th>状态</th><th>创建时间</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(q, i) in quickList" :key="q.id">
+                <td>{{ i + 1 }}</td>
+                <td style="max-width:480px">{{ q.content }}</td>
+                <td>
+                  <button class="btn ghost sm" @click="onToggleQuick(q)">
+                    <span class="tag" :class="q.is_active ? 'ok' : 'gray'">{{ q.is_active ? '启用' : '停用' }}</span>
+                  </button>
+                </td>
+                <td class="muted">{{ fmt(q.created_at) }}</td>
+                <td>
+                  <button class="btn ghost sm" @click="onEditQuick(q)">改</button>
+                  <button class="btn ghost sm" @click="onDeleteQuick(q)">删</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="empty">还没有快捷短语，在上方添加第一条。</div>
+        </div>
       </div>
     </div>
   </div>
@@ -762,6 +797,7 @@ import {
   listAdminBatches, getAdminBatch, reviewBatch,
   listQuestions, syncQuestions,
   listSkills, createSkill, updateSkill, deleteSkill, masteryOverview,
+  listQuickReplies, createQuickReply, updateQuickReply, deleteQuickReply,
 } from '../api.js'
 
 const router = useRouter()
@@ -1300,6 +1336,58 @@ async function onDeleteSkill(s) {
   try {
     await deleteSkill(s.id)
     await loadMasteryOverview()
+  } catch (e) {
+    alert(e.response?.data?.detail || '删除失败')
+  }
+}
+
+// ---------- 快捷短语管理（v0.9） ----------
+const quickList = ref([])
+const quickForm = reactive({ content: '' })
+
+function onTabQuick() {
+  tab.value = 'quick'
+  loadQuickReplies()
+}
+async function loadQuickReplies() {
+  try {
+    const { data } = await listQuickReplies()
+    quickList.value = data
+  } catch (e) {
+    alert(e.response?.data?.detail || '加载快捷短语失败')
+  }
+}
+async function onCreateQuick() {
+  const content = quickForm.content.trim()
+  if (!content) return
+  try {
+    await createQuickReply({ content })
+    quickForm.content = ''
+    await loadQuickReplies()
+  } catch (e) {
+    alert(e.response?.data?.detail || '添加失败')
+  }
+}
+function onEditQuick(q) {
+  const content = prompt('修改短语内容', q.content)
+  if (content === null) return
+  updateQuickReply(q.id, { content: content.trim() || undefined })
+    .then(loadQuickReplies)
+    .catch((e) => alert(e.response?.data?.detail || '更新失败'))
+}
+async function onToggleQuick(q) {
+  try {
+    await updateQuickReply(q.id, { is_active: !q.is_active })
+    await loadQuickReplies()
+  } catch (e) {
+    alert(e.response?.data?.detail || '操作失败')
+  }
+}
+async function onDeleteQuick(q) {
+  if (!confirm(`删除快捷短语「${q.content.slice(0, 20)}…」？`)) return
+  try {
+    await deleteQuickReply(q.id)
+    await loadQuickReplies()
   } catch (e) {
     alert(e.response?.data?.detail || '删除失败')
   }

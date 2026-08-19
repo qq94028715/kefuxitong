@@ -92,6 +92,23 @@
             </div>
           </div>
 
+          <!-- 快捷回复条（v0.9） -->
+          <div v-if="quickReplies.length" class="quick-replies">
+            <span class="muted quick-label">快捷回复</span>
+            <div class="quick-scroll">
+              <button
+                v-for="qr in quickReplies"
+                :key="qr.id"
+                class="quick-chip"
+                type="button"
+                :disabled="sending || session.status === 'completed'"
+                @click="onUseQuickReply(qr.content)"
+              >
+                {{ qr.content }}
+              </button>
+            </div>
+          </div>
+
           <!-- 输入区 -->
           <div v-if="session.status !== 'completed'" class="row" style="margin-top:12px">
             <input
@@ -183,7 +200,7 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   listCategoriesAgent, batchProgress, startBatch, getBatch, startBatchQuestion,
-  listMessages, streamMessage, finishSession,
+  listMessages, streamMessage, finishSession, agentQuickReplies,
 } from '../api.js'
 
 const router = useRouter()
@@ -210,6 +227,7 @@ const questionSkillName = ref('')
 const questionDifficulty = ref('')
 const doneCount = ref(0)
 const batchDone = ref(false)
+const quickReplies = ref([]) // v0.9 快捷回复短语
 
 const canStart = computed(() => {
   const c = cats.value.find(x => x.id === Number(selectedCatId.value))
@@ -267,6 +285,19 @@ function diffLabel(d) {
 function logout() {
   localStorage.clear()
   router.push('/login')
+}
+
+// v0.9 快捷回复：点击填入输入框（空则替换，有内容则追加）
+function onUseQuickReply(text) {
+  const cur = inputText.value.trim()
+  inputText.value = cur ? cur + ' ' + text : text
+}
+
+async function loadQuickReplies() {
+  try {
+    const { data } = await agentQuickReplies()
+    quickReplies.value = data
+  } catch (_) { /* 快捷短语加载失败不阻塞训练 */ }
 }
 
 async function scrollBottom() {
@@ -424,6 +455,7 @@ async function refreshDoneCount() {
 onMounted(async () => {
   await loadCats()
   await loadProgress()
+  await loadQuickReplies()
 })
 </script>
 
@@ -466,6 +498,49 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+.quick-replies {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.quick-label {
+  flex: 0 0 auto;
+  padding-top: 5px;
+  font-size: 12px;
+}
+.quick-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.quick-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text, #333);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quick-chip:hover {
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+}
+.quick-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .batch-status-row {
   display: flex;

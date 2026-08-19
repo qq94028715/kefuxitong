@@ -438,3 +438,29 @@ class MasteryOverviewResponse(BaseModel):
     agents: list[dict] = []  # [{"id","name"}]
     rows: list[dict] = []  # [{user_id, username, skill_id, skill_name, mastery, status}]
     weak_ranking: list[dict] = []  # 薄弱知识点排行 [{skill_id, skill_name, avg_mastery, weak_count}]
+
+
+# ---------- 快捷回复短语（v0.9） ----------
+class QuickReplyCreate(BaseModel):
+    """新建快捷短语。"""
+
+    content: str
+
+
+class QuickReplyUpdate(BaseModel):
+    """更新快捷短语。"""
+
+    content: Optional[str] = None
+    is_active: Optional[bool] = None  # True 启用 / False 停用
+
+
+class QuickReplyOut(BaseModel):
+    """快捷短语视图。"""
+
+    id: int
+    content: str
+    is_active: bool = True
+    sort_order: int = 0
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

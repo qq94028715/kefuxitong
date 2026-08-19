@@ -51,6 +51,7 @@ from .models import (
     Material,
     MistakeLog,
     Question,
+    QuickReply,
     Score,
     Skill,
     SkillMastery,
@@ -86,6 +87,9 @@ from .schemas import (
     QuestionOut,
     QuestionBindSkill,
     QuestionSyncReply,
+    QuickReplyCreate,
+    QuickReplyOut,
+    QuickReplyUpdate,
     ReviewBatchReply,
     ReviewBatchRequest,
     ScoreOut,
@@ -228,6 +232,8 @@ def init_db():
                 db.add(k)
             # v0.8：写入示例知识点（从示例知识的 required_questions + key_knowledge 生成）
             _seed_skills(db, cat.id, DEFAULT_KNOWLEDGE.get(name, {}))
+        # v0.9：写入占位快捷短语（空表才写）
+        _seed_quick_replies(db)
         db.commit()
     finally:
         db.close()
@@ -831,6 +837,141 @@ def mastery_overview(
         skills=skill_info, agents=agents_info,
         rows=rows, weak_ranking=weak_ranking,
     )
+
+
+# ---------- 快捷回复短语（v0.9） ----------
+
+# 初始占位短语（空表时写入；主人提供真实短语后可在管理端增删改）
+DEFAULT_QUICK_REPLIES = [
+    "您好，请问有什么可以帮您？",
+    "好的，请问您需要什么规格？尺寸和厚度大概多少？",
+    "可以的，我先跟您确认一下需求。",
+    "这个价格可以谈的，您量大我这边可以帮您申请优惠。",
+    "交期大概 7-10 个工作日，急单可以另外安排加急。",
+    "好的，我先去确认一下，稍后回复您。",
+    "方便留个联系方式吗？让技术同事直接跟您对接。",
+]
+
+
+def _seed_quick_replies(db: Session) -> None:
+    """首次启动写入占位快捷短语（表空才写，避免覆盖管理端数据）。"""
+    if db.query(QuickReply).count() > 0:
+        return
+    for i, content in enumerate(DEFAULT_QUICK_REPLIES):
+        db.add(
+            QuickReply(
+                content=content,
+                is_active=1,
+                sort_order=i,
+            )
+        )
+    db.commit()
+
+
+@app.get("/api/admin/quick-replies", response_model=list[QuickReplyOut])
+def list_quick_replies(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员查看全部快捷短语（含停用，按排序）。"""
+    rows = (
+        db.query(QuickReply).order_by(QuickReply.sort_order, QuickReply.id).all()
+    )
+    return [
+        QuickReplyOut(
+            id=r.id,
+            content=r.content,
+            is_active=bool(r.is_active),
+            sort_order=r.sort_order,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@app.post("/api/admin/quick-replies", response_model=QuickReplyOut)
+def create_quick_reply(
+    req: QuickReplyCreate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """新建快捷短语（追加到末尾）。"""
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="短语内容不能为空")
+    max_order = db.query(QuickReply).count()
+    r = QuickReply(content=content, is_active=1, sort_order=max_order)
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return QuickReplyOut(
+        id=r.id, content=r.content, is_active=True,
+        sort_order=r.sort_order, created_at=r.created_at,
+    )
+
+
+@app.put("/api/admin/quick-replies/{qid}", response_model=QuickReplyOut)
+def update_quick_reply(
+    qid: int,
+    req: QuickReplyUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """改短语内容 / 启用状态。"""
+    r = db.query(QuickReply).filter(QuickReply.id == qid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="快捷短语不存在")
+    if req.content is not None:
+        content = req.content.strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="短语内容不能为空")
+        r.content = content
+    if req.is_active is not None:
+        r.is_active = 1 if req.is_active else 0
+    db.commit()
+    db.refresh(r)
+    return QuickReplyOut(
+        id=r.id, content=r.content, is_active=bool(r.is_active),
+        sort_order=r.sort_order, created_at=r.created_at,
+    )
+
+
+@app.delete("/api/admin/quick-replies/{qid}")
+def delete_quick_reply(
+    qid: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    r = db.query(QuickReply).filter(QuickReply.id == qid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="快捷短语不存在")
+    db.delete(r)
+    db.commit()
+    return {"detail": "已删除"}
+
+
+@app.get("/api/agent/quick-replies", response_model=list[QuickReplyOut])
+def agent_quick_replies(
+    _: User = Depends(require_agent),
+    db: Session = Depends(get_db),
+):
+    """客服端获取启用中的快捷短语（按排序）。"""
+    rows = (
+        db.query(QuickReply)
+        .filter(QuickReply.is_active == 1)
+        .order_by(QuickReply.sort_order, QuickReply.id)
+        .all()
+    )
+    return [
+        QuickReplyOut(
+            id=r.id,
+            content=r.content,
+            is_active=True,
+            sort_order=r.sort_order,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 
 # ---------- 聊天语料导入 ----------

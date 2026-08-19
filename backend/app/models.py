@@ -397,3 +397,18 @@ class SkillMastery(Base):
     )
 
     skill = relationship("Skill")
+
+
+class QuickReply(Base):
+    """客服快捷回复短语（v0.9，全局通用）。
+
+    客服训练对话时可点击快速填入/发送；管理员在管理端维护。
+    """
+
+    __tablename__ = "quick_reply"
+
+    id = Column(Integer, primary_key=True, index=True)
+    content = Column(Text, nullable=False)  # 短语内容
+    is_active = Column(Integer, default=1)  # 1 启用 / 0 停用
+    sort_order = Column(Integer, default=0)  # 排序（越小越靠前）
+    created_at = Column(DateTime, default=datetime.utcnow)
