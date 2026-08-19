@@ -287,10 +287,10 @@ function logout() {
   router.push('/login')
 }
 
-// v0.9 快捷回复：点击填入输入框（空则替换，有内容则追加）
+// v0.9 快捷回复：千牛/拼多多式点击即发送
 function onUseQuickReply(text) {
-  const cur = inputText.value.trim()
-  inputText.value = cur ? cur + ' ' + text : text
+  if (sending.value || session.value?.status === 'completed') return
+  sendText(text)
 }
 
 async function loadQuickReplies() {
@@ -366,23 +366,22 @@ async function onNextQuestion() {
   }
 }
 
-async function onSend() {
-  const text = inputText.value.trim()
-  if (!text || sending.value) return
-  sending.value = true
+// 发送指定文本（千牛式：快捷短语点击即发送，不碰输入框内容）
+async function sendText(text) {
+  const t = (text || '').trim()
+  if (!t || sending.value) return
 
-  messages.value.push({ id: 'agent-' + Date.now(), role: 'agent', content: text })
-  inputText.value = ''
-
+  messages.value.push({ id: 'agent-' + Date.now(), role: 'agent', content: t })
   const customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
   messages.value.push(customerMsg)
   await scrollBottom()
 
+  sending.value = true
   let streamResult = null
   try {
     streamResult = await streamMessage(
       session.value.id,
-      text,
+      t,
       (token) => {
         customerMsg.content += token
         scrollBottom()
@@ -406,6 +405,13 @@ async function onSend() {
     sending.value = false
     await scrollBottom()
   }
+}
+
+async function onSend() {
+  const text = inputText.value.trim()
+  if (!text) return
+  inputText.value = ''
+  await sendText(text)
 }
 
 async function autoFinish() {
