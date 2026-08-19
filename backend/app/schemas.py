@@ -445,12 +445,14 @@ class QuickReplyCreate(BaseModel):
     """新建快捷短语。"""
 
     content: str
+    group_name: str = "常用回复"
 
 
 class QuickReplyUpdate(BaseModel):
     """更新快捷短语。"""
 
     content: Optional[str] = None
+    group_name: Optional[str] = None
     is_active: Optional[bool] = None  # True 启用 / False 停用
 
 
@@ -459,6 +461,7 @@ class QuickReplyOut(BaseModel):
 
     id: int
     content: str
+    group_name: str = "常用回复"
     is_active: bool = True
     sort_order: int = 0
     created_at: Optional[datetime] = None  # 旧数据/直连 SQL 可能为 NULL

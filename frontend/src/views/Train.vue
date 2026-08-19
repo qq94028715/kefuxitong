@@ -92,15 +92,27 @@
             </div>
           </div>
 
-          <!-- 快捷回复条（v0.9） -->
+          <!-- 快捷回复条（v0.9 千牛式：分组 + 点击即发送 + 悬停预览） -->
           <div v-if="quickReplies.length" class="quick-replies">
-            <span class="muted quick-label">快捷回复</span>
+            <div class="quick-groups">
+              <button
+                v-for="g in quickGroups"
+                :key="g"
+                class="quick-group"
+                :class="{ active: activeQuickGroup === g }"
+                type="button"
+                @click="activeQuickGroup = g"
+              >
+                {{ g }}<span class="quick-count">{{ quickGroupCount(g) }}</span>
+              </button>
+            </div>
             <div class="quick-scroll">
               <button
-                v-for="qr in quickReplies"
+                v-for="qr in filteredQuickReplies"
                 :key="qr.id"
                 class="quick-chip"
                 type="button"
+                :title="qr.content"
                 :disabled="sending || session.status === 'completed'"
                 @click="onUseQuickReply(qr.content)"
               >
@@ -228,6 +240,25 @@ const questionDifficulty = ref('')
 const doneCount = ref(0)
 const batchDone = ref(false)
 const quickReplies = ref([]) // v0.9 快捷回复短语
+const activeQuickGroup = ref('') // 当前选中的分组
+
+// 分组列表（按短语出现顺序）
+const quickGroups = computed(() => {
+  const seen = []
+  for (const qr of quickReplies.value) {
+    const g = qr.group_name || '常用回复'
+    if (!seen.includes(g)) seen.push(g)
+  }
+  return seen
+})
+// 当前分组下的短语
+const filteredQuickReplies = computed(() => {
+  if (!activeQuickGroup.value) return quickReplies.value
+  return quickReplies.value.filter((qr) => (qr.group_name || '常用回复') === activeQuickGroup.value)
+})
+function quickGroupCount(g) {
+  return quickReplies.value.filter((qr) => (qr.group_name || '常用回复') === g).length
+}
 
 const canStart = computed(() => {
   const c = cats.value.find(x => x.id === Number(selectedCatId.value))
@@ -297,6 +328,9 @@ async function loadQuickReplies() {
   try {
     const { data } = await agentQuickReplies()
     quickReplies.value = data
+    if (data.length && !activeQuickGroup.value) {
+      activeQuickGroup.value = data[0].group_name || '常用回复'
+    }
   } catch (_) { /* 快捷短语加载失败不阻塞训练 */ }
 }
 
@@ -506,19 +540,41 @@ onMounted(async () => {
   gap: 12px;
 }
 .quick-replies {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
   margin-top: 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
 }
-.quick-label {
+.quick-groups {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 6px;
+}
+.quick-group {
   flex: 0 0 auto;
-  padding-top: 5px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted, #666);
+  border-radius: 999px;
+  padding: 3px 10px;
   font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.quick-group.active {
+  background: var(--accent, #3b82f6);
+  border-color: var(--accent, #3b82f6);
+  color: #fff;
+  font-weight: 500;
+}
+.quick-count {
+  margin-left: 4px;
+  font-size: 11px;
+  opacity: 0.7;
 }
 .quick-scroll {
   display: flex;
@@ -536,7 +592,7 @@ onMounted(async () => {
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
-  max-width: 240px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

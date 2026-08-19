@@ -747,8 +747,9 @@
 
         <!-- 快捷短语管理（v0.9） -->
         <div v-if="tab === 'quick'">
-          <div class="section-title">快捷回复短语（客服训练时点选）</div>
+          <div class="section-title">快捷回复短语（客服训练时点选，千牛式分组）</div>
           <div class="row" style="margin-bottom:10px">
+            <input class="input" v-model="quickForm.group_name" placeholder="分组（如：常用回复/催付/议价）" style="flex:0 0 180px" />
             <input class="input" v-model="quickForm.content" placeholder="输入短语内容，如：好的，请问您需要什么规格？" style="flex:1" @keyup.enter="onCreateQuick" />
             <button class="btn" :disabled="!quickForm.content.trim()" @click="onCreateQuick">添加</button>
           </div>
@@ -757,12 +758,12 @@
           </div>
           <table v-if="quickList.length">
             <thead>
-              <tr><th>排序</th><th>短语内容</th><th>状态</th><th>创建时间</th><th>操作</th></tr>
+              <tr><th>分组</th><th>短语内容</th><th>状态</th><th>创建时间</th><th>操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="(q, i) in quickList" :key="q.id">
-                <td>{{ i + 1 }}</td>
-                <td style="max-width:480px">{{ q.content }}</td>
+                <td><span class="tag gray">{{ q.group_name || '常用回复' }}</span></td>
+                <td style="max-width:420px">{{ q.content }}</td>
                 <td>
                   <button class="btn ghost sm" @click="onToggleQuick(q)">
                     <span class="tag" :class="q.is_active ? 'ok' : 'gray'">{{ q.is_active ? '启用' : '停用' }}</span>
@@ -1343,7 +1344,7 @@ async function onDeleteSkill(s) {
 
 // ---------- 快捷短语管理（v0.9） ----------
 const quickList = ref([])
-const quickForm = reactive({ content: '' })
+const quickForm = reactive({ content: '', group_name: '常用回复' })
 
 function onTabQuick() {
   tab.value = 'quick'
@@ -1361,7 +1362,7 @@ async function onCreateQuick() {
   const content = quickForm.content.trim()
   if (!content) return
   try {
-    await createQuickReply({ content })
+    await createQuickReply({ content, group_name: quickForm.group_name.trim() || '常用回复' })
     quickForm.content = ''
     await loadQuickReplies()
   } catch (e) {
@@ -1371,7 +1372,10 @@ async function onCreateQuick() {
 function onEditQuick(q) {
   const content = prompt('修改短语内容', q.content)
   if (content === null) return
-  updateQuickReply(q.id, { content: content.trim() || undefined })
+  const group = prompt('修改分组（留空不变）', q.group_name || '常用回复')
+  const payload = { content: content.trim() || undefined }
+  if (group !== null) payload.group_name = group.trim() || '常用回复'
+  updateQuickReply(q.id, payload)
     .then(loadQuickReplies)
     .catch((e) => alert(e.response?.data?.detail || '更新失败'))
 }

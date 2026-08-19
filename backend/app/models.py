@@ -403,12 +403,14 @@ class QuickReply(Base):
     """客服快捷回复短语（v0.9，全局通用）。
 
     客服训练对话时可点击快速填入/发送；管理员在管理端维护。
+    v0.9.3：加 group_name 分组（千牛式分组切换），如 常用回复/催付/设计图。
     """
 
     __tablename__ = "quick_reply"
 
     id = Column(Integer, primary_key=True, index=True)
     content = Column(Text, nullable=False)  # 短语内容
+    group_name = Column(String(32), default="常用回复")  # 分组（千牛式）
     is_active = Column(Integer, default=1)  # 1 启用 / 0 停用
     sort_order = Column(Integer, default=0)  # 排序（越小越靠前）
     created_at = Column(DateTime, default=datetime.utcnow)

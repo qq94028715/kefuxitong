@@ -293,6 +293,23 @@ def _migrate_legacy_columns():
     except Exception as e:  # 迁移失败不阻塞启动
         logging.getLogger(__name__).warning("question 迁移失败: %s", e)
 
+    # v0.9.3: quick_reply 补分组列
+    try:
+        if "quick_reply" not in inspect(engine).get_table_names():
+            return
+        cols = [c["name"] for c in inspect(engine).get_columns("quick_reply")]
+        with engine.connect() as conn:
+            if "group_name" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE quick_reply ADD COLUMN group_name "
+                        "VARCHAR(32) DEFAULT '常用回复'"
+                    )
+                )
+                conn.commit()
+    except Exception as e:  # 迁移失败不阻塞启动
+        logging.getLogger(__name__).warning("quick_reply 迁移失败: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -843,13 +860,13 @@ def mastery_overview(
 
 # 初始占位短语（空表时写入；主人提供真实短语后可在管理端增删改）
 DEFAULT_QUICK_REPLIES = [
-    "您好，请问有什么可以帮您？",
-    "好的，请问您需要什么规格？尺寸和厚度大概多少？",
-    "可以的，我先跟您确认一下需求。",
-    "这个价格可以谈的，您量大我这边可以帮您申请优惠。",
-    "交期大概 7-10 个工作日，急单可以另外安排加急。",
-    "好的，我先去确认一下，稍后回复您。",
-    "方便留个联系方式吗？让技术同事直接跟您对接。",
+    ("常用回复", "您好，请问有什么可以帮您？"),
+    ("常用回复", "好的，请问您需要什么规格？尺寸和厚度大概多少？"),
+    ("常用回复", "可以的，我先跟您确认一下需求。"),
+    ("常用回复", "这个价格可以谈的，您量大我这边可以帮您申请优惠。"),
+    ("常用回复", "交期大概 7-10 个工作日，急单可以另外安排加急。"),
+    ("常用回复", "好的，我先去确认一下，稍后回复您。"),
+    ("常用回复", "方便留个联系方式吗？让技术同事直接跟您对接。"),
 ]
 
 
@@ -857,10 +874,11 @@ def _seed_quick_replies(db: Session) -> None:
     """首次启动写入占位快捷短语（表空才写，避免覆盖管理端数据）。"""
     if db.query(QuickReply).count() > 0:
         return
-    for i, content in enumerate(DEFAULT_QUICK_REPLIES):
+    for i, (group, content) in enumerate(DEFAULT_QUICK_REPLIES):
         db.add(
             QuickReply(
                 content=content,
+                group_name=group,
                 is_active=1,
                 sort_order=i,
             )
@@ -881,6 +899,7 @@ def list_quick_replies(
         QuickReplyOut(
             id=r.id,
             content=r.content,
+            group_name=r.group_name or "常用回复",
             is_active=bool(r.is_active),
             sort_order=r.sort_order,
             created_at=r.created_at,
@@ -899,13 +918,16 @@ def create_quick_reply(
     content = req.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="短语内容不能为空")
+    group = (req.group_name or "常用回复").strip()[:32] or "常用回复"
     max_order = db.query(QuickReply).count()
-    r = QuickReply(content=content, is_active=1, sort_order=max_order)
+    r = QuickReply(
+        content=content, group_name=group, is_active=1, sort_order=max_order
+    )
     db.add(r)
     db.commit()
     db.refresh(r)
     return QuickReplyOut(
-        id=r.id, content=r.content, is_active=True,
+        id=r.id, content=r.content, group_name=r.group_name, is_active=True,
         sort_order=r.sort_order, created_at=r.created_at,
     )
 
@@ -917,7 +939,7 @@ def update_quick_reply(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """改短语内容 / 启用状态。"""
+    """改短语内容 / 分组 / 启用状态。"""
     r = db.query(QuickReply).filter(QuickReply.id == qid).first()
     if not r:
         raise HTTPException(status_code=404, detail="快捷短语不存在")
@@ -926,12 +948,16 @@ def update_quick_reply(
         if not content:
             raise HTTPException(status_code=400, detail="短语内容不能为空")
         r.content = content
+    if req.group_name is not None:
+        group = req.group_name.strip()[:32] or "常用回复"
+        r.group_name = group
     if req.is_active is not None:
         r.is_active = 1 if req.is_active else 0
     db.commit()
     db.refresh(r)
     return QuickReplyOut(
-        id=r.id, content=r.content, is_active=bool(r.is_active),
+        id=r.id, content=r.content, group_name=r.group_name,
+        is_active=bool(r.is_active),
         sort_order=r.sort_order, created_at=r.created_at,
     )
 
@@ -966,6 +992,7 @@ def agent_quick_replies(
         QuickReplyOut(
             id=r.id,
             content=r.content,
+            group_name=r.group_name or "常用回复",
             is_active=True,
             sort_order=r.sort_order,
             created_at=r.created_at,
