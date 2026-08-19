@@ -461,6 +461,6 @@ class QuickReplyOut(BaseModel):
     content: str
     is_active: bool = True
     sort_order: int = 0
-    created_at: datetime
+    created_at: Optional[datetime] = None  # 旧数据/直连 SQL 可能为 NULL
 
     model_config = ConfigDict(from_attributes=True)
