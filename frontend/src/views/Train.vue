@@ -318,10 +318,52 @@ function logout() {
   router.push('/login')
 }
 
-// v0.9 快捷回复：千牛/拼多多式点击即发送
+// v0.9 快捷回复：千牛/拼多多式 → 文本进输入框（可编辑后再发）
 function onUseQuickReply(text) {
-  if (sending.value || session.value?.status === 'completed') return
-  sendText(text)
+  const cur = inputText.value
+  inputText.value = cur ? cur + text : text
+}
+
+async function onSend() {
+  const text = inputText.value.trim()
+  if (!text || sending.value) return
+  sending.value = true
+
+  messages.value.push({ id: 'agent-' + Date.now(), role: 'agent', content: text })
+  inputText.value = ''
+
+  const customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
+  messages.value.push(customerMsg)
+  await scrollBottom()
+
+  let streamResult = null
+  try {
+    streamResult = await streamMessage(
+      session.value.id,
+      text,
+      (token) => {
+        customerMsg.content += token
+        scrollBottom()
+      },
+      (data) => {
+        streamResult = data
+      }
+    )
+
+    const { data: msgs } = await listMessages(session.value.id)
+    messages.value = msgs
+
+    if (streamResult?.is_finished) {
+      session.value.status = 'completed'
+      await autoFinish()
+    }
+  } catch (e) {
+    alert(typeof e === 'string' ? e : e.message || '发送失败')
+    messages.value = messages.value.filter(m => m !== customerMsg)
+  } finally {
+    sending.value = false
+    await scrollBottom()
+  }
 }
 
 async function loadQuickReplies() {
@@ -400,53 +442,7 @@ async function onNextQuestion() {
   }
 }
 
-// 发送指定文本（千牛式：快捷短语点击即发送，不碰输入框内容）
-async function sendText(text) {
-  const t = (text || '').trim()
-  if (!t || sending.value) return
-
-  messages.value.push({ id: 'agent-' + Date.now(), role: 'agent', content: t })
-  const customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
-  messages.value.push(customerMsg)
-  await scrollBottom()
-
-  sending.value = true
-  let streamResult = null
-  try {
-    streamResult = await streamMessage(
-      session.value.id,
-      t,
-      (token) => {
-        customerMsg.content += token
-        scrollBottom()
-      },
-      (data) => {
-        streamResult = data
-      }
-    )
-
-    const { data: msgs } = await listMessages(session.value.id)
-    messages.value = msgs
-
-    if (streamResult?.is_finished) {
-      session.value.status = 'completed'
-      await autoFinish()
-    }
-  } catch (e) {
-    alert(typeof e === 'string' ? e : e.message || '发送失败')
-    messages.value = messages.value.filter(m => m !== customerMsg)
-  } finally {
-    sending.value = false
-    await scrollBottom()
-  }
-}
-
-async function onSend() {
-  const text = inputText.value.trim()
-  if (!text) return
-  inputText.value = ''
-  await sendText(text)
-}
+// 快捷回复：千牛/拼多多式 → 文本进输入框（可编辑后再发）
 
 async function autoFinish() {
   try {
