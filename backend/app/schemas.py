@@ -391,6 +391,21 @@ class AgentBatchProgress(BaseModel):
     done_count: int = 0  # 当前批已完成题数
     mistake_count: int = 0  # 错题本未解决题数
     can_start_new: bool = False  # 能否开新批（无 in_progress/awaiting 批次）
+    active_session_id: Optional[int] = None  # 该批首个 in_progress session，用于一键续接
+
+
+class AgentBatchHistoryItem(BaseModel):
+    """客服自己的批次历史项（用于查看历史批次 + 续接 in_progress）。"""
+
+    id: int
+    category_id: int
+    category_name: str = ""
+    status: str
+    question_count: int = 0
+    done_count: int = 0  # 已完成题数（session.completed）
+    created_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    active_session_id: Optional[int] = None  # 该批首个 in_progress session，用于续接
 
 
 class ReviewItem(BaseModel):

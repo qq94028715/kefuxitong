@@ -124,11 +124,27 @@ def create_batch(db: Session, user_id: int, category_id: int) -> TrainingBatch:
 
 
 def start_question(db: Session, batch: TrainingBatch, user_id: int):
-    """取批次中第一道未开始（无会话）的题，创建训练会话并绑定。
+    """取批次中第一道可继续的题。
 
-    Returns: (session, question, batch_question) 或 (None, None, None) 当全部已开始。
+    优先级：
+    1. 已存在 in_progress session 的题 → 直接续接（不再开新 session）
+       （应对中途退出后回来继续的常见场景，避免重复开 session）
+    2. 完全没有 session 的题 → 创建新 session 并绑定
+    3. 全部已 completed（无 in_progress 且无未开始）→ 返回 (None, None, None)
+
+    Returns: (session, question, batch_question) 或 (None, None, None)。
     """
-    for bq in batch.items:
+    # 1. 先扫一遍找 in_progress session（按 seq 顺序，保证续接最早未完成的题）
+    for bq in sorted(batch.items, key=lambda x: x.seq):
+        if bq.session_id is None:
+            continue
+        s = db.query(ChatSession).filter(ChatSession.id == bq.session_id).first()
+        if s and s.status == "in_progress":
+            q = db.query(Question).filter(Question.id == bq.question_id).first()
+            return s, q, bq
+
+    # 2. 再找第一个完全没有 session 的题，开新会话
+    for bq in sorted(batch.items, key=lambda x: x.seq):
         if bq.session_id is None:
             q = db.query(Question).filter(Question.id == bq.question_id).first()
             s = ChatSession(
@@ -141,6 +157,8 @@ def start_question(db: Session, batch: TrainingBatch, user_id: int):
             db.commit()
             db.refresh(s)
             return s, q, bq
+
+    # 3. 全部都已完成
     return None, None, None
 
 

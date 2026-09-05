@@ -40,6 +40,56 @@
             </div>
           </div>
 
+          <!-- v0.15：历史批次列表（折叠面板） -->
+          <div v-if="myBatchHistory.length > 1" style="margin-top:12px">
+            <button
+              class="btn ghost sm"
+              style="width:100%;text-align:left"
+              @click="showHistory = !showHistory"
+            >
+              📚 历史训练记录（除当前批外 {{ myBatchHistory.length - 1 }} 条）
+              {{ showHistory ? '▾' : '▸' }}
+            </button>
+            <div
+              v-if="showHistory"
+              style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;max-height:300px;overflow:auto"
+            >
+              <table style="width:100%;font-size:13px">
+                <thead>
+                  <tr style="text-align:left;color:#888">
+                    <th>批ID</th><th>分类</th><th>状态</th><th>进度</th><th>开始时间</th><th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="b in myBatchHistory.filter(x => x.id !== progress?.batch?.id)"
+                    :key="b.id"
+                    style="border-top:1px dashed var(--border)"
+                  >
+                    <td>#{{ b.id }}</td>
+                    <td>{{ b.category_name }}</td>
+                    <td>
+                      <span class="tag" :class="batchStatusClass(b.status)">{{ batchStatusLabel(b.status) }}</span>
+                    </td>
+                    <td>{{ b.done_count }}/{{ b.question_count }}</td>
+                    <td>{{ fmt(b.created_at) }}</td>
+                    <td>
+                      <button
+                        v-if="b.active_session_id"
+                        class="btn sm"
+                        @click="onResumeSession(b.active_session_id, b.id)"
+                      >继续</button>
+                      <span v-else class="muted">—</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="muted" style="margin-top:8px;font-size:12px">
+                提示：已练完/已判定的批次数据由主管在管理后台查看具体判定与评分。
+              </div>
+            </div>
+          </div>
+
           <!-- 等待主管判定 -->
           <div v-if="progress && progress.has_batch && progress.batch.status === 'awaiting_review'" class="panel-wait">
             <div class="muted" style="font-size:15px">本批 20 题已练完，等待主管判定后才能开始下一批。</div>
@@ -245,8 +295,8 @@
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  listCategoriesAgent, batchProgress, startBatch, getBatch, startBatchQuestion,
-  listMessages, streamMessage, finishSession, agentQuickReplies,
+  listCategoriesAgent, batchProgress, listMyBatches, startBatch, getBatch, startBatchQuestion,
+  listMessages, getSession, streamMessage, finishSession, agentQuickReplies,
 } from '../api.js'
 
 const router = useRouter()
@@ -255,6 +305,8 @@ const username = localStorage.getItem('username') || '客服'
 const cats = ref([])
 const selectedCatId = ref(null)
 const progress = ref({ has_batch: false, done_count: 0, mistake_count: 0, can_start_new: true })
+const myBatchHistory = ref([])  // v0.15 历史批次列表
+const showHistory = ref(false)  // 是否展开历史面板
 const starting = ref(false)
 
 // 对话状态
@@ -482,6 +534,14 @@ function batchStatusClass(s) {
 function diffLabel(d) {
   return { easy: '易', medium: '中', hard: '难' }[d] || d
 }
+function fmt(s) {
+  if (!s) return ''
+  // ISO datetime → "MM-DD HH:mm"
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return s
+  const p = n => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 
 function logout() {
   localStorage.clear()
@@ -591,6 +651,60 @@ async function loadProgress() {
   if (data.has_batch && data.batch && data.batch.status === 'in_progress') {
     selectedCatId.value = data.batch.category_id
   }
+  // v0.15：自动续接当前批首个 in_progress session（应对中途退出再进来的场景）
+  if (data.active_session_id && !chatting.value) {
+    await onResumeSession(data.active_session_id, data.batch.id)
+  }
+}
+
+async function loadBatchHistory() {
+  try {
+    const { data } = await listMyBatches()
+    myBatchHistory.value = data
+  } catch (_) { /* 忽略：未登录等情况 */ }
+}
+
+// v0.15：续接已存在的 in_progress session（不开新题，直接进入对话）
+async function onResumeSession(sessionId, batchId) {
+  starting.value = true
+  try {
+    // 拿 session 详情 + 当前 batch 详情
+    const [{ data: sess }, { data: batch }] = await Promise.all([
+      getSession(sessionId),
+      getBatch(batchId),
+    ])
+    session.value = sess
+    seq.value = (batch.items.findIndex(i => i.session_id === sessionId) + 1) || 1
+    total.value = batch.question_count
+    // 找出该题目的标题
+    const bq = batch.items.find(i => i.session_id === sessionId)
+    if (bq) {
+      const qid = bq.question_id
+      isMistake.value = false  // 续接时不重算
+      // 拿 question 详情：复用 listMessages + batch.items 里的 question 信息
+      questionTitle.value = `第 ${bq.seq} 题`
+      questionSkillName.value = ''
+      questionDifficulty.value = ''
+      // 简单起见：暂不展示具体标题，只标"继续训练"
+    }
+    score.value = null
+    batchDone.value = false
+    inputText.value = ''
+    resetTyping()
+    _stopLiveTick()
+    chatting.value = true
+    const { data: msgs } = await listMessages(sessionId)
+    messages.value = msgs
+    await scrollBottom()
+  } catch (e) {
+    console.error('续接失败', e)
+    // 续接失败时退回到开新题路径
+    if (progress.value?.batch?.id) {
+      try { await onNextQuestion() } catch (_) {}
+    }
+  } finally {
+    starting.value = false
+  }
 }
 
 async function onStartBatch() {
@@ -689,7 +803,8 @@ async function refreshDoneCount() {
 
 onMounted(async () => {
   await loadCats()
-  await loadProgress()
+  await loadBatchHistory()
+  await loadProgress()  // 此函数末尾会自动续接 in_progress session
   await loadQuickReplies()
 })
 </script>

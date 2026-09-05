@@ -64,6 +64,7 @@ from .schemas import (
     AdminBatchListItem,
     AdminSessionDetail,
     AdminSessionListItem,
+    AgentBatchHistoryItem,
     AgentBatchProgress,
     AgentCreate,
     AgentOut,
@@ -1704,12 +1705,22 @@ def batch_progress(
         )
     )
     mistake_count = batch_svc.count_unresolved_mistakes(db, user.id)
+    # 找该批首个 in_progress session，用于前端一键续接
+    active_session_id = None
+    for bq in sorted(batch.items, key=lambda x: x.seq):
+        if bq.session_id is None:
+            continue
+        s = db.query(ChatSession).filter(ChatSession.id == bq.session_id).first()
+        if s and s.status == "in_progress":
+            active_session_id = s.id
+            break
     return AgentBatchProgress(
         has_batch=True,
         batch=_batch_out(db, batch, user.id),
         done_count=done_count,
         mistake_count=mistake_count,
         can_start_new=batch.status == "reviewed",
+        active_session_id=active_session_id,
     )
 
 
@@ -1740,6 +1751,64 @@ def start_batch(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return BatchStartReply(batch=_batch_out(db, batch, user.id))
+
+
+@app.get("/api/agent/batches", response_model=list[AgentBatchHistoryItem])
+def list_my_batches(
+    user: User = Depends(require_agent), db: Session = Depends(get_db)
+):
+    """客服自己的批次历史列表（含所有状态），按 id 倒序。
+
+    用于客服查看已练完/已判定的批次，避免退出后再也找不到。
+    """
+    batches = (
+        db.query(TrainingBatch)
+        .filter(TrainingBatch.user_id == user.id)
+        .order_by(TrainingBatch.id.desc())
+        .all()
+    )
+    result = []
+    for b in batches:
+        cat = db.query(Category).filter(Category.id == b.category_id).first()
+        done_count = sum(
+            1
+            for bq in b.items
+            if bq.session_id
+            and (
+                db.query(ChatSession)
+                .filter(ChatSession.id == bq.session_id)
+                .first()
+                .status
+                == "completed"
+            )
+        )
+        # 最近一条 in_progress session（用于续接）
+        active_session_id = None
+        for bq in sorted(b.items, key=lambda x: x.seq):
+            if bq.session_id is None:
+                continue
+            s = (
+                db.query(ChatSession)
+                .filter(ChatSession.id == bq.session_id)
+                .first()
+            )
+            if s and s.status == "in_progress":
+                active_session_id = s.id
+                break
+        result.append(
+            AgentBatchHistoryItem(
+                id=b.id,
+                category_id=b.category_id,
+                category_name=cat.name if cat else "",
+                status=b.status,
+                question_count=b.question_count,
+                done_count=done_count,
+                created_at=b.created_at,
+                reviewed_at=b.reviewed_at,
+                active_session_id=active_session_id,
+            )
+        )
+    return result
 
 
 @app.get("/api/agent/batches/{batch_id}", response_model=TrainingBatchOut)
@@ -1776,22 +1845,29 @@ def start_batch_question(
     session, question, bq = batch_svc.start_question(db, b, user.id)
     if not session:
         batch_svc.refresh_batch_status(db, b)
-        raise HTTPException(status_code=400, detail="本批题目已全部开始")
+        raise HTTPException(400, detail="本批题目已全部开始")
 
     cat = db.query(Category).filter(Category.id == b.category_id).first()
-    knowledge = get_knowledge_for_training(db, b.category_id)
-    reply = generate_customer_reply(
-        knowledge,
-        history=[],
-        category_name=cat.name if cat else "",
-        turn_count=0,
-        max_turns=settings.max_dialogue_turns,
-        question_script=question.script_text if question else "",
+    # 判断是新建还是续接：续接时不再加 AI 开场白，避免重复
+    existing_msg_count = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session.id)
+        .count()
     )
-    reply = _clean_reply(reply)
-    db.add(ChatMessage(session_id=session.id, role="customer", content=reply))
-    db.commit()
-    db.refresh(session)
+    if existing_msg_count == 0:
+        knowledge = get_knowledge_for_training(db, b.category_id)
+        reply = generate_customer_reply(
+            knowledge,
+            history=[],
+            category_name=cat.name if cat else "",
+            turn_count=0,
+            max_turns=settings.max_dialogue_turns,
+            question_script=question.script_text if question else "",
+        )
+        reply = _clean_reply(reply)
+        db.add(ChatMessage(session_id=session.id, role="customer", content=reply))
+        db.commit()
+        db.refresh(session)
 
     return StartQuestionReply(
         session=_session_out(session, cat.name if cat else ""),

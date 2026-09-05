@@ -161,6 +161,7 @@ export const getScore = (sessionId) =>
 
 // ---------- 错题本批次训练（v0.7） ----------
 export const batchProgress = () => http.get('/agent/batch-progress')
+export const listMyBatches = () => http.get('/agent/batches')
 export const startBatch = (categoryId) =>
   http.post('/agent/batches', { category_id: categoryId })
 export const getBatch = (id) => http.get(`/agent/batches/${id}`)
