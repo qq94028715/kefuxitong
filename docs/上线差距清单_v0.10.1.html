@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="69qFMtuwDfyZcKoy3eIM39">
+<head data-page-node-id="eagA3t0Q6iQ22NvNHvQtlH">
+<meta charset="UTF-8" data-page-node-id="83UmmB4WUFlDgBzvPwBQUK">
+<title>kefuxitong 上线差距清单 · v0.10.1</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --border: #e5e5ea;
+    --red: #d70015;
+    --red-bg: #fff1f1;
+    --yellow: #b07000;
+    --yellow-bg: #fff8e6;
+    --green: #1a7a3c;
+    --green-bg: #e8f6ed;
+    --blue: #0066cc;
+    --blue-bg: #e5f1ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6;
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  .sub { color: var(--muted); margin-bottom: 24px; }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .summary .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    text-align: center;
+  }
+  .summary .num { font-size: 32px; font-weight: 700; }
+  .summary .lbl { color: var(--muted); font-size: 13px; }
+  .summary .red .num { color: var(--red); }
+  .summary .yellow .num { color: var(--yellow); }
+  .summary .green .num { color: var(--green); }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  h2 {
+    font-size: 18px;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  h2 .tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+  .tag-red { background: var(--red-bg); color: var(--red); }
+  .tag-yellow { background: var(--yellow-bg); color: var(--yellow); }
+  .tag-green { background: var(--green-bg); color: var(--green); }
+  .tag-blue { background: var(--blue-bg); color: var(--blue); }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    font-weight: 600;
+    background: #fafafa;
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td.check {
+    width: 80px;
+    text-align: center;
+    font-size: 18px;
+  }
+  td.check.empty { color: var(--border); }
+  td.check.done { color: var(--green); }
+  td.check.todo { color: var(--red); }
+  td.who {
+    width: 110px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ai { background: var(--blue-bg); color: var(--blue); padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+  .you { background: var(--yellow-bg); color: var(--yellow); padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+  .both { background: #f0e8ff; color: #6b21a8; padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+  .priority {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .p1 { background: var(--red-bg); color: var(--red); }
+  .p2 { background: var(--yellow-bg); color: var(--yellow); }
+  .p3 { background: var(--green-bg); color: var(--green); }
+  ul.notes { margin: 4px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+  .roadmap {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .step {
+    background: #fafafa;
+    border-radius: 10px;
+    padding: 14px;
+    border: 1px solid var(--border);
+  }
+  .step h3 { margin: 0 0 6px; font-size: 14px; color: var(--blue); }
+  .step p { margin: 0; font-size: 13px; color: var(--muted); }
+  .footer {
+    margin-top: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .status-bar {
+    background: linear-gradient(90deg, var(--red-bg) 0%, var(--red-bg) 40%, var(--yellow-bg) 40%, var(--yellow-bg) 70%, var(--green-bg) 70%, var(--green-bg) 100%);
+    height: 8px;
+    border-radius: 4px;
+    margin: 16px 0 24px;
+    position: relative;
+  }
+  .status-bar::after {
+    content: "代码 40% · 业务 30% · 运维 30%";
+    position: absolute;
+    left: 50%;
+    top: 14px;
+    transform: translateX(-50%);
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body data-page-node-id="ZD4wnenpkEnIL0U9dZUQfD">
+<div class="wrap" data-page-node-id="hVHh8AkftzlDn7iGzeYCl1">
+
+<h1 data-page-node-id="WcHL0JourGpIH7JU16WurA">kefuxitong v0.10.1 → 上线差距清单</h1>
+<p class="sub" data-page-node-id="GcXXPb10D94i2W2Lp93XuC">主人 · 这份清单把"还差什么"分成三块：<b data-page-node-id="O8kvzDDmqcgT1GVKA43Qzh">我能立刻动手的代码</b>、<b data-page-node-id="3VpHG5YemN2om69VASvyET">需要你拍板的业务规则</b>、<b data-page-node-id="jL8E7yc5w414VARAaMZQVg">上线后绕不开的运维合规</b>。每条勾选框方便你一条条过。</p>
+
+<div class="summary" data-page-node-id="Mom2cmlbq0HJBDMqvKlWlc">
+  <div class="card red" data-page-node-id="EidUGFMgOvAyordD4ONFaW">
+    <div class="num" data-page-node-id="PULf1hxuUPT2LcVIjgXEit">5</div>
+    <div class="lbl" data-page-node-id="p1JAOsWA6ZdKsMai8v3dY0">代码必须做</div>
+  </div>
+  <div class="card yellow" data-page-node-id="ufKrhVTguTjfSbPUgl09Do">
+    <div class="num" data-page-node-id="Ynf4LNvVoCSFsv11uNfUnh">6</div>
+    <div class="lbl" data-page-node-id="JyEUBhTUWBtWnSIgjvEeTh">需要你提供</div>
+  </div>
+  <div class="card green" data-page-node-id="2jWiRSWCUtRJGDbuZCC6Wl">
+    <div class="num" data-page-node-id="8yzfkdE20FRhbJ3CB4AL6u">5</div>
+    <div class="lbl" data-page-node-id="zApVX7XMaFVgDSeyHklyEz">建议上线前补</div>
+  </div>
+</div>
+
+<div class="status-bar" data-page-node-id="B3tKr2Qv7LBKuPQAzArWNf"></div>
+
+<!-- ========== 代码层未完成 ========== -->
+<section data-page-node-id="fpbFDWvIgyuPJE9f99xWkQ">
+  <h2 data-page-node-id="HBDAX3hz4uuF5kRwx6uDRs">🔴 代码必须做 <span class="tag tag-red" data-page-node-id="SmUIxqxVlO7tiKQK6XnlHC">5 项 · AI 全包</span></h2>
+  <p class="hint" data-page-node-id="d4oTWWCZVDaW81O4Ipu9qG">这些是用户最初提的核心需求里仍未交付的，或者上线后会立刻爆雷的硬伤。</p>
+  <table data-page-node-id="NvfKMqvqMC4CYbBQtm22oO">
+    <thead data-page-node-id="jjehrDreLFfCJpPR9i8Fla">
+      <tr data-page-node-id="CipbDCwrFUnzjqpaYmvjGT">
+        <th class="check" data-page-node-id="8hyRpEFqvsBV8vVEadJm8t">状态</th>
+        <th data-page-node-id="pDiRkO8LGHEqCrZJLErQLb">事项</th>
+        <th data-page-node-id="ye6a5zfrtEzry7XTA6KtBA">细节</th>
+        <th class="who" data-page-node-id="0Mqv5kL9TQFkYyabnk9d2o">负责人</th>
+      </tr>
+    </thead>
+    <tbody data-page-node-id="N91Y1h5MNnmBMEgFC7RkWE">
+      <tr data-page-node-id="1mz5ylLdogui43f6OVrwHQ">
+        <td class="check todo" data-page-node-id="ehn0IUWFliiof6lY5Pj62e">☐</td>
+        <td data-page-node-id="87ReCWZPtFM1Cf4arozoML"><b data-page-node-id="lKEBCLgogOLwD6idFEOwNk">打字速度 + 回复时长统计 <span class="priority p1" data-page-node-id="8VCLEkFniH0EjwYKT34ry2">P0</span></b><br data-page-node-id="DZBDi2FJ4idJwnSZS1Sg1w"><span style="color:var(--muted);font-size:12px;" data-page-node-id="D3MbrMPWE0unDsYlQK0A8z">用户在第一轮就提的需求，至今 0%</span></td>
+        <td data-page-node-id="d2YXJi4EnEjaqmwvoO3JZ3">
+          <ul class="notes" data-page-node-id="CnXKbDUJZbjyOUy2jhneDQ">
+            <li data-page-node-id="5EkqLJOVKVCVc93tPyqyQs">前端 Train.vue：监听 input/keydown 记录首尾时间戳</li>
+            <li data-page-node-id="gHFpXBZXGM6HjpzXrD9n45">ChatMessage 表加 first_keystroke_at / last_keystroke_at / send_at</li>
+            <li data-page-node-id="KiM86PQJDsi8J03rBNBtUD">后端落库 + Admin 看板聚合 CPM / 平均回复时长</li>
+            <li data-page-node-id="Us7RnbIO4AEUaYZoz6eK0R"><b data-page-node-id="Gl9Z1n2mcIJGSD5mtjrybY">注意</b>：v0.9 快捷短语点击直接发送、粘贴内容，必须排除 → 否则数据虚高</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="eCW6xKi0BgKAxNMvwMP2ht"><span class="ai" data-page-node-id="57S9sOIHNrTLBMx463CffU">AI</span></td>
+      </tr>
+      <tr data-page-node-id="0EKow7kzjwjOciE3M69Qhs">
+        <td class="check todo" data-page-node-id="p0UWNWh3SKqIehvCVAcq2a">☐</td>
+        <td data-page-node-id="VhBJFjhXAmnB8EV2d6sAw0"><b data-page-node-id="eam85XXpLsaeEOvFsxcuLS">登录页默认密码强提醒 <span class="priority p1" data-page-node-id="AZQrEuVGZOtpMjdvNZaXh3">P0</span></b></td>
+        <td data-page-node-id="phcdIBapDp1YL8HBwAmmyg">
+          <ul class="notes" data-page-node-id="Vlaeod2kxB75RPraQ7r6am">
+            <li data-page-node-id="lL7jIRPi6Mn892dwnn7lKp">首次 admin/admin123 登录后强制跳转改密页</li>
+            <li data-page-node-id="04MTZuKlmJ4PBfEe7JbOU6">Admin.vue 客服列表：默认密码的客服标黄警示</li>
+            <li data-page-node-id="BEJ4ZwYaoJEvFtAChOZvSn">JWT secret_key 默认值还是 dev 占位，要改成读取 .env 强制项</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="uuVciFQfNQEy86ufHqdj7P"><span class="ai" data-page-node-id="Y7okNiD0UWChvOGQrUPXGy">AI</span></td>
+      </tr>
+      <tr data-page-node-id="pJz3K117rnCaAJyyk0Jcqo">
+        <td class="check todo" data-page-node-id="hhJ9LiHtQV7MW3fCHbfems">☐</td>
+        <td data-page-node-id="XfvnymbIFENEUDARdhBQfo"><b data-page-node-id="XAwHbOfFlHN9lPgtGI5QjE">移动端系统测试 <span class="priority p1" data-page-node-id="lAfyZ1Tf4DRBufSKAyrqDt">P0</span></b></td>
+        <td data-page-node-id="SZNHqoHp6V6QTZ4SFUAWkR">
+          <ul class="notes" data-page-node-id="FH3NotVUDp38OUwm4In3B0">
+            <li data-page-node-id="UYSNeG2WvUW5jq7tdszBUr">kefu02 白屏只修了 Train.vue 首屏空值，移动端整体适配未系统测</li>
+            <li data-page-node-id="YjDBBGDXCHGuauidpRCVNc">要测：iPhone Safari / 安卓 Chrome，常见分辨率 390×844、414×896、360×800</li>
+            <li data-page-node-id="wvYU0rkOelvx8p5teEhaZH">重点：表格横滑、消息气泡宽度、快捷短语面板弹出</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="Gb2HE31Tw6AXGX5bAi6Bhv"><span class="ai" data-page-node-id="iYhGTJU7v5YHEmaMWEEgV2">AI</span></td>
+      </tr>
+      <tr data-page-node-id="1F4uMMlHCqFv5TMrVbBmWx">
+        <td class="check todo" data-page-node-id="ZTv7qE6DcXQSHYzEdzxrm3">☐</td>
+        <td data-page-node-id="xy97lRUHQKu3PcZeH62pKZ"><b data-page-node-id="ejbwv9FZonuPZkguOKsk40">LLM 异常前端兜底 <span class="priority p1" data-page-node-id="SbYMNHeWhVPiQZp4SoAMBE">P0</span></b></td>
+        <td data-page-node-id="2A2rKWHqsZeevXv1wM2KQH">
+          <ul class="notes" data-page-node-id="YpVxFZKP0nMxfRp5k7m54m">
+            <li data-page-node-id="kEWjbwcerigiMDryEZZPx3">现在 LLM 没配 / 配错 / 余额耗尽，SSE 流可能 hang 住或空白</li>
+            <li data-page-node-id="RTMMo4b9OFPr0DW2rQKl1O">前端要：超时提示 + 「请检查 API Key」明确文案 + 一键重启会话</li>
+            <li data-page-node-id="Fm7q5iB4bFGvAI6tgUdDfE">后端要：timeout 60s 改为可配，且异常分类（401/402/429/timeout）</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="sh0JEnaPKCBn0u62AKFqd4"><span class="ai" data-page-node-id="mKWOUDzatarmdD7VZNGFuB">AI</span></td>
+      </tr>
+      <tr data-page-node-id="Xextb4jg9BdE4ctKfJwv2w">
+        <td class="check todo" data-page-node-id="yxF1aEO3eY9gPWlvA8AzjQ">☐</td>
+        <td data-page-node-id="meDhBWYfdX6hdFKaOQTQbR"><b data-page-node-id="KYLf7esemP8HB33tRn8hYt">数据库自动备份 <span class="priority p1" data-page-node-id="kHGzqTHpuFAROoCIvGmAct">P0</span></b></td>
+        <td data-page-node-id="8NFeMz5GCuWXa53QzsG33H">
+          <ul class="notes" data-page-node-id="hvAlT057b1WB5fCXTV3AyU">
+            <li data-page-node-id="sPHJQu2iQBCleRYgSnPlh1">SQLite 单文件，丢库 = 丢一切（训练记录、剧本、配置）</li>
+            <li data-page-node-id="azCUGm9G8fq37wz7PHQxHR">建议：每日 cron + 启动时热备份到 <code data-page-node-id="8StdXCRE7UOZKX6tFLOaBI">D:\kefu-backups\</code>，保留 30 天</li>
+            <li data-page-node-id="fb25kl2A4uTZIwoU14vo0X">方案：Python sqlite3 backup API 或 robocopy 镜像</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="U0SIZ4BFqUXqNdYTHkukpL"><span class="ai" data-page-node-id="iKfyYOVGM2jajUdVLMwiwC">AI</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ========== 需要用户提供的 ========== -->
+<section data-page-node-id="soxfWykHIPzdmQChE7vTgV">
+  <h2 data-page-node-id="waz0C0FD8OdiigFYfNElII">🟡 需要你提供的业务材料 <span class="tag tag-yellow" data-page-node-id="3mr8WtE0CrGDuKjuWTAEYX">6 项 · 你给</span></h2>
+  <p class="hint" data-page-node-id="kHh37VGP4pTin89kcmcjOC">代码不能凭空写出"你们家店的业务规则"。这些材料上线前给到，不然系统跑得起来但不准。</p>
+  <table data-page-node-id="n2krXKUp8QPYE3gWvTCL3L">
+    <thead data-page-node-id="OUkMH785bTPOmbodAj4PSN">
+      <tr data-page-node-id="iB1ljpCHpwuf11viYyp9By">
+        <th class="check" data-page-node-id="BPzoJfPMLKWkjlb1I8g31d">状态</th>
+        <th data-page-node-id="GPvq1uIRXMQygnYBr3zD0m">事项</th>
+        <th data-page-node-id="rKigLpdhw3dDiAWjzdObCD">需要什么</th>
+        <th class="who" data-page-node-id="RoA6qsdgHUsuykU0uTMuQg">负责人</th>
+      </tr>
+    </thead>
+    <tbody data-page-node-id="iYHLVvdlxA15A7aaVkGr6t">
+      <tr data-page-node-id="vObr0TZBXsxjWArGgZhIuc">
+        <td class="check todo" data-page-node-id="iX6pymoH7gTdwv52NZOmFN">☐</td>
+        <td data-page-node-id="RQzMBBAay5BSNIDB25pwE9"><b data-page-node-id="hcTvC9GiKKXNJYjDMH7pHg">真实聊天截图/转写 20-50 组 <span class="priority p1" data-page-node-id="C63qtwBesPl4b3Zk1fCliY">P0</span></b></td>
+        <td data-page-node-id="gxRYKIzqvVz0RsVs1tsBC7">
+          <ul class="notes" data-page-node-id="Q1jSrtXAB57txu4qD3HCMy">
+            <li data-page-node-id="S18E5xpZcB1Rm7BWjZQgQF">系统现在靠"剧本骨架"演 AI 客户，要演得像你们家店必须喂真实对话</li>
+            <li data-page-node-id="1D7gvxUBXB7YGpNijaB7i1">建议：从千牛/拼多多导 30 组成交 + 10 组流失 + 10 组投诉</li>
+            <li data-page-node-id="KJwKmqjQ3Gm7OWU2mXlL9W">格式：txt 或 md，一问一答，标记哪句是客服哪句是客户</li>
+            <li data-page-node-id="gDgX0vilECBks0IMsHpyVM"><b data-page-node-id="xP8Dv5bVYj6sHIETGXrdzs">涉及手机号/地址要脱敏</b>（项目里有脱敏模块可批处理）</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="bw8bXDrfy6xSlSXNa5EF2S"><span class="you" data-page-node-id="OKb7pXDDYfTUvRrCF9Int9">你</span></td>
+      </tr>
+      <tr data-page-node-id="CFDxh1zcXRat42JVmYWtHm">
+        <td class="check todo" data-page-node-id="TTKmKhfLE0lUwCXUYvmhqF">☐</td>
+        <td data-page-node-id="8BHr6QZZSeBQd37yCvEZ9m"><b data-page-node-id="KPyTTCO5nGbNBkQwMbY16P">评分权重 + 及格线 <span class="priority p1" data-page-node-id="4psjm8x3MCwMrzq2RahTUt">P0</span></b></td>
+        <td data-page-node-id="5aSh7PkL9Ar0KaQylzXQ0B">
+          <ul class="notes" data-page-node-id="qJGR4zwMJz4rCuXQIDCT1J">
+            <li data-page-node-id="HxgBowtplE85pQHvMpDDdV">四维评分：需求确认 / 产品知识 / 销售技巧 / 成交推进 —— 各占多少 %</li>
+            <li data-page-node-id="yabceBJXQvkV9jDiTEvHKl">多少分及格？不及格是否禁上岗 / 重训几次算过？</li>
+            <li data-page-node-id="GydfuzGcKGacCuhZQztdy1">目前 evaluator 是 AI 自由打分，权重硬编码待定</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="QdfkNc9tDCgZLGCUTHWfkR"><span class="you" data-page-node-id="DHmZfJejcbHI5PxgV3qmhL">你</span></td>
+      </tr>
+      <tr data-page-node-id="1HNYw2Cbx6uQlQ14iYYCe7">
+        <td class="check todo" data-page-node-id="cAynMn0m7et3hfA0MuLeze">☐</td>
+        <td data-page-node-id="89F8Wi1DNLBfr5eH8E38i6"><b data-page-node-id="zFnQ8ScBvABMkeJa5RYI55">批次题库 30-50 题 <span class="priority p2" data-page-node-id="Gdk5Gmrua1ZHgua1UAQTJp">P2</span></b></td>
+        <td data-page-node-id="wgd3Qn3HZqhe02wE58a431">
+          <ul class="notes" data-page-node-id="0S6ATk8Jsdjbe3q4chdJTs">
+            <li data-page-node-id="R2TPCTT0leCmQHjc1Vki9B">现在 batches 表只有 2 条记录（其中 1 条是 admin 自己用），题库几乎为空</li>
+            <li data-page-node-id="1mn8dtZvgx2AGz1Cq8oIfq">每道题要：客户情境 + 客户问什么 + 期望客服关键回复点</li>
+            <li data-page-node-id="TIIxYDeZZvT9hCXOAWOAOa">建议从已成交的"金牌客服"对话里提炼（跟聊天资料可一并整理）</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="xf0Jo5ZNXTbx0KN6YvqoHx"><span class="you" data-page-node-id="Gms0xEOvm4MCCqusgi5zw8">你</span></td>
+      </tr>
+      <tr data-page-node-id="Wk7AbLWHNofKJfGkqA1VAL">
+        <td class="check todo" data-page-node-id="17xwkRk2RVRGIy7STXVa8m">☐</td>
+        <td data-page-node-id="iXloohTLeTs41QKzj1GFwU"><b data-page-node-id="PJjxfMaEef4AmlFb3W0lZy">快捷短语分类 + 话术 <span class="priority p2" data-page-node-id="D3TvMVplw8bLhHmDIvRyeo">P2</span></b></td>
+        <td data-page-node-id="vI4rN3Djgk3lqxO6pCPnvd">
+          <ul class="notes" data-page-node-id="g5txGZ5deOhd6zGwEFdjkD">
+            <li data-page-node-id="nMqJqSNAqA09JZzSMztwQi">v0.9 已有千牛式快捷短语，但分类和文案需要按你公司业务重排</li>
+            <li data-page-node-id="tHqIpdiZjgdjnevohAldfC">建议：开篇 / 报价 / 议价 / 物流 / 售后 / 结束 等 6-8 个分类，每类 5-10 句</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="hxIA0VESFxZTL8DhEIv981"><span class="you" data-page-node-id="S80bUGk5Rx3KewnEzJvpFL">你</span></td>
+      </tr>
+      <tr data-page-node-id="wPDX0bGopxuBSgzocvK84C">
+        <td class="check todo" data-page-node-id="1coaRSmLU9x0IIHWLBp5YK">☐</td>
+        <td data-page-node-id="ouJnCLJxRXbmEEBgGR9Pmq"><b data-page-node-id="MQdumIwPdYesoXj2Kzvxod">品牌名 / Logo <span class="priority p2" data-page-node-id="WOjbuOofT8LsA1FEcKzUxA">P2</span></b></td>
+        <td data-page-node-id="NoqB6qS28nDFRGkYX3NUkE">
+          <ul class="notes" data-page-node-id="THbk9rokUaO4DH8Jd10QWZ">
+            <li data-page-node-id="NbsXymgPpv8cgF4WNXzljd">README 和系统标题还是「AI 客服培训平台」通用名</li>
+            <li data-page-node-id="zQKxakKnAWXLXEFD2O5hFC">Login.vue 页面标题、Admin.vue 顶栏 logo 要换成你们品牌</li>
+            <li data-page-node-id="zlQbGi63fg9gIstscdUgxY">如果自有域名 + Logo，给我即可</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="ud2e15K6bM1XOjAUgxlVBL"><span class="you" data-page-node-id="DxsmHbGZhuPndX1h6VURtZ">你</span></td>
+      </tr>
+      <tr data-page-node-id="lTfOxSgAo2djASrpIKoXuF">
+        <td class="check todo" data-page-node-id="SnU9hTKB7zT3isuHHnffOW">☐</td>
+        <td data-page-node-id="RZXzU2WgqYRy9eyKUGP4Kn"><b data-page-node-id="rpdcMWNatlamalIbJT3OTw">客服人数 + 单点登录策略 <span class="priority p3" data-page-node-id="BvjNbQ36U3RC9VGFGET6wM">P3</span></b></td>
+        <td data-page-node-id="rFUIhuf30CUEVXFGbk922e">
+          <ul class="notes" data-page-node-id="h9Ofe1BMsk1YsgnVZ4bgBM">
+            <li data-page-node-id="YP8JfKl5KQVkvRzOJVAhej">当前 JWT 24h 不踢人，账号可在多端同时登录</li>
+            <li data-page-node-id="4bEt5ctlCqhzfXEimKwCUl">如果 5 人小团队可以不管；10 人+ 要不要"挤下线"提示</li>
+            <li data-page-node-id="A6aBZIXMFjSxWmKNsSl2x9">排班/班次要不要？影响训练任务分配和成绩归属</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="mofFzc7DPyRo1n47wCUBFO"><span class="you" data-page-node-id="dcV8cE7nTx9ASMFUp8EdNg">你</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ========== 运维/合规 ========== -->
+<section data-page-node-id="ARsX8jICQNm3aSOf3HD8Cf">
+  <h2 data-page-node-id="UBxdFtLoguk7N2WRB5EEZa">🟢 上线前建议补 <span class="tag tag-green" data-page-node-id="cziAqSWHnDFPqSJAe6kLiK">5 项 · 你们拍板</span></h2>
+  <p class="hint" data-page-node-id="rTjqkkYDZ4qKCl0jwfd2MG">不影响"跑起来"，但会影响"长期用下去"。不一定要现在做，但心里要有数。</p>
+  <table data-page-node-id="gTVR8dLrirBYc73hY6HMWl">
+    <thead data-page-node-id="m6b4Lpjr2wp21lzSn83ov1">
+      <tr data-page-node-id="KiP5M2pcAhezvluigNUIFG">
+        <th class="check" data-page-node-id="TMJMMqyNS1lrQbvFBlkWVH">状态</th>
+        <th data-page-node-id="u8vOydDTvcFZo4aUTQrprX">事项</th>
+        <th data-page-node-id="osUDDfqJXd5OFA5EqNqxBZ">细节</th>
+        <th class="who" data-page-node-id="wGETk5maV8ILbPSEtYNvMR">负责人</th>
+      </tr>
+    </thead>
+    <tbody data-page-node-id="COZdJaHKcgwiHXiyZFaD0n">
+      <tr data-page-node-id="P4xnmobu2nfxF0I6gqZorI">
+        <td class="check empty" data-page-node-id="hELXzeobKMuLuDhSGmCeeV">☐</td>
+        <td data-page-node-id="PJdd7EbCav7bHN6yN1M1TQ"><b data-page-node-id="yOV3aBkPrqoIv0gyDtdCAd">HTTPS / 反代 <span class="priority p2" data-page-node-id="2WE7V2w7e13u8DBSyLgvfC">P2</span></b></td>
+        <td data-page-node-id="VGN5WbJIL0AWEBVLoFsGe0">
+          <ul class="notes" data-page-node-id="R3VUo8eza9EDrDhAmnFKAt">
+            <li data-page-node-id="CSftiMbpx4I0GHnVO1HQY4">目前裸 HTTP 跑在 5173/8000，局域网没问题</li>
+            <li data-page-node-id="tWJzrLZDBWbSFl2TqP0zgY">如果客服外网访问 → Cloudflare Tunnel / Nginx + Let's Encrypt / 内网 VPN</li>
+            <li data-page-node-id="OQ0j0dKbnWaaHEuTGfZhKV">DeepSeek API Key 走 HTTPS 没事，浏览器地址栏会"不安全"影响信任</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="Nc5FEL3hpe2inOGZwl0po1"><span class="both" data-page-node-id="7Ta1f5G6w8Xhn2joRw0bnq">共建</span></td>
+      </tr>
+      <tr data-page-node-id="x8CHZcVLPWtepNDwnW2Gvp">
+        <td class="check empty" data-page-node-id="2XRlnG2mRPNToB1gCUKdjk">☐</td>
+        <td data-page-node-id="GwlXsXC3ndb59H2RQVodOu"><b data-page-node-id="Hea80qlgrxMePMDaNRJKhP">进程守护 <span class="priority p2" data-page-node-id="c3ch21ftXm5SGBxAVpbZGO">P2</span></b></td>
+        <td data-page-node-id="WJOznXiPIn1hDLtQNkVHrw">
+          <ul class="notes" data-page-node-id="Njutng04KJeAE0nF0Chk7N">
+            <li data-page-node-id="zVZ1b6cjY7E2729FjU3jpZ">现在 uvicorn 后端崩了不会自动重启</li>
+            <li data-page-node-id="j4CVbnEOiCC3ZcJptzKhOo">选 supervisor / pm2 / NSSM（Windows）/ nssm-py 之一</li>
+            <li data-page-node-id="JFMIjOiD8Tzdl57N8e1N6e">建议 Windows 环境用 NSSM，把 backend/frontend 注册成服务</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="b7rwJ1lxkkyMXm223IanK1"><span class="ai" data-page-node-id="94jSKVeIrhhn5v85rY2LyE">AI</span></td>
+      </tr>
+      <tr data-page-node-id="dkRc914vyEIOUJQ3C8lHUp">
+        <td class="check empty" data-page-node-id="dtaXjeA0LZTEr4EQPXM5HO">☐</td>
+        <td data-page-node-id="WV66KsEq5f2wOdZBSCc10a"><b data-page-node-id="EDNFvMjUOAR92Sqv55gAd8">运行日志 + 训练日志 <span class="priority p2" data-page-node-id="u1BwINRMSH0XAwCAcUV2FA">P2</span></b></td>
+        <td data-page-node-id="A70gPoYbisFZN3YExPpUQF">
+          <ul class="notes" data-page-node-id="m0cAbTYA4QjxTWkQ27cMEJ">
+            <li data-page-node-id="gafrWpH6w89SkbTzvGuCvq">项目里 log 只有 logger.info 输出，没归集到文件</li>
+            <li data-page-node-id="nyqlcQZEpEP77KADCIekAX">建议：每天按大小切割存到 <code data-page-node-id="Q84pocf9WDp6RZQiClwTmN">logs/yyyy-mm-dd.log</code>，保留 30 天</li>
+            <li data-page-node-id="z1nwj15EGEuKGxvBPf8N1a">训练日志另存：每次训练的 LLM 调用次数、耗时、token 估算</li>
+            <li data-page-node-id="8flDGwxtlv2AR745ybD6QW">计算你的 LLM 成本控制心里有数</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="GmjV5Bjvp7NxHSmsXDxMwI"><span class="ai" data-page-node-id="XJglg4lCZBILgX9qS4ovHI">AI</span></td>
+      </tr>
+      <tr data-page-node-id="e6iNDCtAJa2VEvKQ9mPOGY">
+        <td class="check empty" data-page-node-id="7WfxyTTrYlj3T0yq3FSEng">☐</td>
+        <td data-page-node-id="3aZyQSwPREjd7lb6P6D7oC"><b data-page-node-id="6uIZEcNI1dwtaGAOYsbnLp">操作审计 <span class="priority p3" data-page-node-id="12tGuwG9Ozqe6PTgDEyDrF">P3</span></b></td>
+        <td data-page-node-id="R054fb1yxfRmC17UdGXc7w">
+          <ul class="notes" data-page-node-id="upGTof0YuIvCfuqccLa6rR">
+            <li data-page-node-id="MUpZ9aXhv2XEqDmNUhqfZ5">谁改过谁的密码？谁导出过训练数据？目前无审计表</li>
+            <li data-page-node-id="CSVf8jcX4ffgyDkbDj6CzJ">如果培训数据涉商业机密，建议加 audit_log 表 + 关键操作记录</li>
+            <li data-page-node-id="hnx5JBGXphy1gKmnlze03t">合规风险：员工投诉"数据被改"时无据可查</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="1cfwiIFzsF5m8BVWGtKzcq"><span class="ai" data-page-node-id="ejnUD06U9uP3VIyLYkvA7P">AI</span></td>
+      </tr>
+      <tr data-page-node-id="NFViVK6x53nt5JyAhXHFKS">
+        <td class="check empty" data-page-node-id="29KblomgnnLSGjuApQmmL6">☐</td>
+        <td data-page-node-id="C0JhncOB9AS24dkA5bVrBE"><b data-page-node-id="FNENSAs6dKpxaT7Mix27LH">浏览器兼容 <span class="priority p3" data-page-node-id="DLvrsWasXU3b8hzjxGzT2K">P3</span></b></td>
+        <td data-page-node-id="DafXbXnIwwvT7u6CCoHeUH">
+          <ul class="notes" data-page-node-id="ialSlECGWzwSvIcEndUBNR">
+            <li data-page-node-id="OSGecj4d01LGtmmgChgHDs">确认客服实际用什么浏览器：Chrome / Edge / 360 / 钉钉内置浏览器</li>
+            <li data-page-node-id="qX0ZQOwLI16n5FRCDLw5tN">项目用 Vue3 + 现代化 JS，IE / 老 Safari 直接放弃</li>
+            <li data-page-node-id="EfB1pmSdf2ox46RZw0Rqfb">钉钉/企业微信内置浏览器偶尔有 UA 坑，需要真机测</li>
+          </ul>
+        </td>
+        <td class="who" data-page-node-id="NrvzsUVs84WwzeZKMx6N2I"><span class="you" data-page-node-id="ssC4Hq8bqiQ3SBoYCtCwDI">你</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ========== 推荐路线 ========== -->
+<section data-page-node-id="Jyc6gXGzGl73sgVYox9ZtZ">
+  <h2 data-page-node-id="QmVAPPNHOrm5fYN4wEPTii">🛣️ 推荐上线路线 <span class="tag tag-blue" data-page-node-id="2cTS3s67uvYWSjKwjjW9yc">三步走</span></h2>
+  <div class="roadmap" data-page-node-id="R1nAUOXcLMQrNyEwVynckN">
+    <div class="step" data-page-node-id="wNUTx2ZiEWtelTYOyx65Es">
+      <h3 data-page-node-id="nzTAYsdeQGG4xHYatZb5ra">第 1 步 · 内部试运行（1-2 周）</h3>
+      <p data-page-node-id="PHGPJbH8H4VLi2JE1PmPUB">
+        先把 <b data-page-node-id="W1DfdKDlXzIDxcXvoXLcFJ">5 项代码 P0</b> 全部补完（打字速度是用户最初诉求，必须做）。<br data-page-node-id="EYwOp1P0F6uMl4GIy2dxXA"><br data-page-node-id="CA5mnSEHNl1NSHivwVZcF3">
+        找 1-2 个客服当小白鼠，跑自由训练 + 1 套批次题，看主流程是否跑通。<br data-page-node-id="4Enp5KpnbzsIhJSpluEIvJ"><br data-page-node-id="KrymSGi8lHX1GTP5mr8baD">
+        <b data-page-node-id="GAT9MUjLke4lXIPfUtFxct">完成标志</b>：客服能登录、能聊天、有分数、能看回放。
+      </p>
+    </div>
+    <div class="step" data-page-node-id="2iw7QTGGI5Z2AYQnloujc6">
+      <h3 data-page-node-id="A9FrKdlGTgocM3xBBLK3yt">第 2 步 · 题库 + 资料 补料（2-3 周）</h3>
+      <p data-page-node-id="3gWDDn6xZt9EjMPaDaMjQK">
+        你把 <b data-page-node-id="NMziCowvElBkWM4h0xiP7f">聊天资料 + 题库 + 评分规则</b> 给到我。<br data-page-node-id="PnCl5ecVHO9wektBupDPiO"><br data-page-node-id="ZaxNoue21is9QMV1ShwXIc">
+        我把题库批量导入 + 让 AI 客户"学你们家说话"。<br data-page-node-id="2t5tHmiUaPcD2YsoIi3mhS"><br data-page-node-id="DpbxNPzXHtbWavYF6qL3Bq">
+        <b data-page-node-id="IUHvM75CR7YTmwRCoUTqJe">完成标志</b>：客服训练完觉得自己真见过这客户。
+      </p>
+    </div>
+    <div class="step" data-page-node-id="I2cy1F9FcY2pnCe3j1dYhJ">
+      <h3 data-page-node-id="8JmSExtHXFlzPSZG3QF753">第 3 步 · 灰度上线（持续）</h3>
+      <p data-page-node-id="DYHrOoo3bil5iiO5TSBse9">
+        3-5 个客服先用，每周根据反馈调整（批次题难度、评分校准、快捷短语）。<br data-page-node-id="3qr1Xxc7pfXxLbjSELgHxI"><br data-page-node-id="graX1g9l2PW5sNnEB6cnYX">
+        同时上 HTTPS + 进程守护 + 自动备份。<br data-page-node-id="xeLofYPuzsBbzyo1nW2S0g"><br data-page-node-id="nebHfAuO8T8svT1yUNtsKB">
+        <b data-page-node-id="Kf53UXaThnkiBSZGRW31rm">完成标志</b>：新人入职 SOP 里加"过 kefuxitong 训练 80 分才上号"。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 你现在就能给我的 ========== -->
+<section data-page-node-id="OtB58AnkK166RVn0vQcD33">
+  <h2 data-page-node-id="GIkPn0ZycYviOVOn2trSID">🚀 你现在立刻能给我的（加速用）</h2>
+  <p class="hint" data-page-node-id="PqsgFLk1cmHpR4KRvvE7lB">如果你想让我马上接着推，下面任一材料都给得到位：</p>
+  <ol style="line-height:2;padding-left:20px;" data-page-node-id="l2b17Tt2BADpw1VomNQCvJ">
+    <li data-page-node-id="gvleGPTT1MxvVy7ONEDltZ"><b data-page-node-id="xBhUa7fhs85fQ6NOkG8HvO">20 条聊天记录</b>（txt 转写即可，脱敏后的），我立刻做"训练语料迁移"，让 AI 客户演得更像</li>
+    <li data-page-node-id="EE383NakFfBzIWdgDU3t57"><b data-page-node-id="0PFnlHVFdObDT5vBMZS4ej">DeepSeek API Key</b> 或已有余额账号 → 写到 <code data-page-node-id="44snNMLGiV9M6E50bRSowd">backend/.env</code> → 我配好 LLM 异常兜底</li>
+    <li data-page-node-id="E1rav2Zhz6pvYSutBnxkvc"><b data-page-node-id="rTx2EXRqFDp0rv05fgZwfH">品牌名 + Logo 文件</b>（如有） → 我改 Login/Admin 页头 + README</li>
+    <li data-page-node-id="E7HXHGSZgtAPfc4Rht1hxf"><b data-page-node-id="40CxA6ekiL0LIESdDhJ1mQ">客服登录浏览器型号</b> → 我针对性测移动端</li>
+    <li data-page-node-id="PwlOYjvJtZDeVbTwdViYw3"><b data-page-node-id="MHATnapMB1X3bNHZFNPiFL">外部域名（如有）</b> → 我规划 HTTPS / 反代方案</li>
+  </ol>
+</section>
+
+<div class="footer" data-page-node-id="TL4r1DYCrDKFhe1MDYTvPO">
+  评估时间：2026-09-05 · 当前版本 v0.10.1 · 4 个 commit 已推送 GitHub
+</div>
+
+</div>
+</body>
+</html>
