@@ -10,8 +10,9 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -109,6 +110,7 @@ from .schemas import (
     StartQuestionReply,
     TokenResponse,
     TrainingBatchOut,
+    TypingStatsOut,
 )
 
 # 内置示例知识（首次启动写入，无 LLM 也能体验训练流程）
@@ -1430,6 +1432,7 @@ def admin_list_sessions(
     """管理员查看训练记录列表（含分数摘要）。
 
     可按 user_id / category_id 过滤。按 id 倒序（最新在前）。
+    v0.11: 聚合键入统计（avg_cpm / avg_response_ms / quick_reply_ratio / typing_samples）。
     """
     q = (
         db.query(ChatSession, User, Category)
@@ -1444,11 +1447,33 @@ def admin_list_sessions(
 
     result = []
     for s, u, c in rows:
-        msg_count = (
-            db.query(ChatMessage).filter(ChatMessage.session_id == s.id).count()
-        )
+        msgs = db.query(ChatMessage).filter(ChatMessage.session_id == s.id).all()
+        msg_count = len(msgs)
         score_total = s.score.total_score if s.score else None
         score_summary = s.score.summary if s.score else ""
+
+        # v0.11 聚合
+        agent_msgs = [m for m in msgs if m.role == "agent"]
+        valid_msgs = [
+            m for m in agent_msgs
+            if (m.keystroke_count or 0) >= 3
+            and (m.char_count or 0) >= 5
+            and not m.is_paste
+            and m.typed_duration_ms
+            and m.typed_duration_ms > 0
+            and m.char_count
+        ]
+        cpms = [_compute_cpm(m.char_count, m.typed_duration_ms)
+                for m in valid_msgs]
+        cpms = [c for c in cpms if c is not None and c > 0]
+        avg_cpm = round(sum(cpms) / len(cpms), 1) if cpms else None
+        resp = [m.response_duration_ms for m in agent_msgs
+                if m.response_duration_ms is not None
+                and 0 <= m.response_duration_ms < 10 * 60 * 1000]
+        avg_resp = int(sum(resp) / len(resp)) if resp else None
+        qr_count = sum(1 for m in agent_msgs if m.is_quick_reply)
+        qr_ratio = round(qr_count / len(agent_msgs), 2) if agent_msgs else None
+
         result.append(
             AdminSessionListItem(
                 id=s.id,
@@ -1462,6 +1487,10 @@ def admin_list_sessions(
                 message_count=msg_count,
                 score_total=score_total,
                 score_summary=score_summary,
+                avg_cpm=avg_cpm,
+                avg_response_ms=avg_resp,
+                quick_reply_ratio=qr_ratio,
+                typing_samples=len(valid_msgs),
             )
         )
     return result
@@ -1494,9 +1523,7 @@ def admin_get_session(
         started_at=s.started_at,
         ended_at=s.ended_at,
         conversation_summary=s.conversation_summary or "",
-        messages=[
-            MessageOut.model_validate(m, from_attributes=True) for m in s.messages
-        ],
+        messages=[_msg_out(m) for m in s.messages],
         score=_score_out(s.score) if s.score else None,
     )
 
@@ -1822,7 +1849,7 @@ def list_messages(
     session_id: int, user: User = Depends(require_agent), db: Session = Depends(get_db)
 ):
     s = _get_user_session(db, session_id, user.id)
-    return s.messages
+    return [_msg_out(m) for m in s.messages]
 
 
 @app.post("/api/agent/sessions/{session_id}/messages", response_model=SendMessageReply)
@@ -1838,10 +1865,22 @@ def send_message(
     cat = db.query(Category).filter(Category.id == s.category_id).first()
     knowledge = get_knowledge_for_training(db, s.category_id)
 
-    # 存客服消息
+    # 找上一条 customer 消息（用于算 response_duration）
+    prev_customer = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == s.id, ChatMessage.role == "customer")
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    prev_customer_at = prev_customer.created_at if prev_customer else None
+
+    # 存客服消息（created_at 即为 send_at）
     agent_msg = ChatMessage(session_id=s.id, role="agent", content=req.content)
     db.add(agent_msg)
-    db.flush()
+    db.flush()  # 先拿到 id 与 created_at，再写 typing 字段
+
+    # v0.11: 应用键入统计
+    _apply_typing_metrics(agent_msg, req.typing_metrics, prev_customer_at)
 
     # 计算已完成轮数（客服发言次数）
     history = list(s.messages)  # 含刚加的 agent_msg
@@ -1886,9 +1925,9 @@ def send_message(
     db.refresh(agent_msg)
 
     return SendMessageReply(
-        agent_message=MessageOut.model_validate(agent_msg, from_attributes=True),
+        agent_message=_msg_out(agent_msg),
         customer_message=(
-            MessageOut.model_validate(customer_msg, from_attributes=True)
+            _msg_out(customer_msg)
             if customer_msg else None
         ),
         is_finished=is_finished,
@@ -1923,10 +1962,22 @@ def stream_message(
     knowledge = get_knowledge_for_training(db, s.category_id)
     knowledge_id = s.category_id  # 按 category 维度缓存
 
-    # 存客服消息
+    # 找上一条 customer 消息（用于算 response_duration）
+    prev_customer = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == s.id, ChatMessage.role == "customer")
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    prev_customer_at = prev_customer.created_at if prev_customer else None
+
+    # 存客服消息（created_at 即 send_at）
     agent_msg = ChatMessage(session_id=s.id, role="agent", content=req.content)
     db.add(agent_msg)
-    db.flush()
+    db.flush()  # 先拿到 created_at，再写 typing 字段
+
+    # v0.11: 应用键入统计
+    _apply_typing_metrics(agent_msg, req.typing_metrics, prev_customer_at)
 
     history = list(s.messages)  # 含刚加的 agent_msg
     turn_count = sum(1 for m in history if m.role == "agent")
@@ -1938,7 +1989,7 @@ def stream_message(
     # 剧本必须在闭包外取（db 在请求结束后会关闭，生成器内再访问会失效）
     question_script = _session_question_script(db, s)
 
-    # 提交客服消息，后续 generator 用独立 session
+    # 提交客服消息（含 typing 字段），后续 generator 用独立 session
     db.commit()
     db.refresh(agent_msg)
 
@@ -2102,6 +2153,105 @@ def _session_out(s: ChatSession, category_name: str = "") -> SessionOut:
         id=s.id, category_id=s.category_id, category_name=category_name,
         status=s.status, started_at=s.started_at, ended_at=s.ended_at,
     )
+
+
+# ===================== v0.11 键入统计辅助 =====================
+
+
+def _compute_cpm(char_count: Optional[int], typed_duration_ms: Optional[int]) -> Optional[float]:
+    """CPM = 字 / 分钟。typed_duration_ms <= 0 或 char_count 缺失 → None。"""
+    if char_count is None or typed_duration_ms is None or typed_duration_ms <= 0:
+        return None
+    return round(char_count / typed_duration_ms * 60 * 1000, 1)
+
+
+def _typing_stats_from_msg(m: ChatMessage) -> Optional[TypingStatsOut]:
+    """仅客服消息（agent）有意义；AI 客户消息统一返回 None。"""
+    if m.role != "agent":
+        return None
+    stats = TypingStatsOut(
+        keystroke_count=m.keystroke_count,
+        char_count=m.char_count,
+        is_paste=m.is_paste,
+        is_quick_reply=m.is_quick_reply,
+        typed_duration_ms=m.typed_duration_ms,
+        response_duration_ms=m.response_duration_ms,
+        cpm=_compute_cpm(m.char_count, m.typed_duration_ms),
+    )
+    # 全部字段都 None 时返回 None，让前端省着渲染
+    return stats if any([
+        m.keystroke_count is not None,
+        m.char_count is not None,
+        m.is_paste is not None,
+        m.is_quick_reply is not None,
+        m.typed_duration_ms is not None,
+        m.response_duration_ms is not None,
+    ]) else None
+
+
+def _msg_out(m: ChatMessage) -> MessageOut:
+    """统一构造 MessageOut，带 typing 字段。"""
+    return MessageOut(
+        id=m.id, role=m.role, content=m.content, created_at=m.created_at,
+        typing=_typing_stats_from_msg(m),
+    )
+
+
+def _parse_iso_dt(s: Optional[str]) -> Optional[datetime]:
+    """前端 ISO 时间字符串 → datetime 对象（兼容 'Z' 后缀）。None → None。"""
+    if not s:
+        return None
+    try:
+        # 'Z' → '+00:00' 给 fromisoformat
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        # 统一转为 naive UTC（项目用 datetime.utcnow）
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return None
+
+
+def _apply_typing_metrics(
+    msg: ChatMessage,
+    metrics,
+    prev_customer_msg_created_at: Optional[datetime],
+) -> None:
+    """把前端上报的 typing_metrics 写入 ChatMessage，并自动算 typed/response duration。
+
+    前端传 ISO 字符串，后端自己算耗时，避免时区误差。
+    response_duration = msg.created_at(≈ send_at) - 上一条 customer 消息时间。
+    """
+    if metrics is None:
+        return
+    fk = _parse_iso_dt(metrics.first_keystroke_at)
+    lk = _parse_iso_dt(metrics.last_keystroke_at)
+    msg.first_keystroke_at = fk
+    msg.last_keystroke_at = lk
+    if metrics.keystroke_count is not None:
+        msg.keystroke_count = max(0, int(metrics.keystroke_count))
+    if metrics.char_count is not None:
+        msg.char_count = max(0, int(metrics.char_count))
+    if metrics.is_paste is not None:
+        msg.is_paste = bool(metrics.is_paste)
+    if metrics.is_quick_reply is not None:
+        msg.is_quick_reply = bool(metrics.is_quick_reply)
+
+    # typed_duration：last - first（毫秒）
+    if fk and lk and lk >= fk:
+        msg.typed_duration_ms = int((lk - fk).total_seconds() * 1000)
+    else:
+        msg.typed_duration_ms = None
+
+    # response_duration：上一条 customer 消息到这条 agent 消息（毫秒）
+    if prev_customer_msg_created_at and msg.created_at:
+        delta = msg.created_at - prev_customer_msg_created_at
+        # 数据库存了 created_at（commit 前的）就直接用；用毫秒
+        msg.response_duration_ms = max(0, int(delta.total_seconds() * 1000))
+    else:
+        msg.response_duration_ms = None
 
 
 def _score_out(sc: Score) -> ScoreOut:

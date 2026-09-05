@@ -12,6 +12,7 @@ import json
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -158,7 +159,18 @@ class ChatSession(Base):
 
 
 class ChatMessage(Base):
-    """对话消息：customer(AI客户) / agent(客服)。"""
+    """对话消息：customer(AI客户) / agent(客服)。
+
+    v0.11 键入与回复时长统计：
+    - first_keystroke_at / last_keystroke_at: 客服首/末次按键的客户端时间（UTC，发送时上报）
+    - keystroke_count: 客服键入键数（不含 Shift/Ctrl/方向键/F-keys，粘贴不计入）
+    - char_count: 最终发送字符数（用于计有效打字，排除超长会话/快捷短语统计）
+    - is_paste: 是否含粘贴内容（影响统计口径：含粘贴则不计入打字速度分子）
+    - is_quick_reply: 输入是否由快捷短语触发（影响统计口径，单独展示）
+    - typed_duration_ms: 后端计算 = last - first（毫秒），避免前端时区/序列化误差
+    - response_duration_ms: 后端计算 = send_at - 上一条 customer 消息时间（毫秒）
+    - 仅客服消息 (role='agent') 有值；AI 客户消息全部 NULL
+    """
 
     __tablename__ = "chat_message"
 
@@ -169,6 +181,16 @@ class ChatMessage(Base):
     role = Column(String(16), nullable=False)  # customer / agent
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # v0.11 键入统计字段（全部 nullable，老数据自动 NULL）
+    first_keystroke_at = Column(DateTime, nullable=True)
+    last_keystroke_at = Column(DateTime, nullable=True)
+    keystroke_count = Column(Integer, nullable=True)
+    char_count = Column(Integer, nullable=True)
+    is_paste = Column(Boolean, nullable=True)
+    is_quick_reply = Column(Boolean, nullable=True)
+    typed_duration_ms = Column(Integer, nullable=True)
+    response_duration_ms = Column(Integer, nullable=True)
 
     session = relationship("ChatSession", back_populates="messages")
 

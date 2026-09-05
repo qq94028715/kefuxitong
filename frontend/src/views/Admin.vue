@@ -319,7 +319,9 @@
             <thead>
               <tr>
                 <th>ID</th><th>客服</th><th>分类</th><th>状态</th>
-                <th>消息数</th><th>分数</th><th>总评</th><th>时间</th><th>操作</th>
+                <th>消息数</th><th>分数</th>
+                <th>打字速度</th><th>回复时长</th><th>快捷短语</th>
+                <th>总评</th><th>时间</th><th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -336,7 +338,28 @@
                   <strong v-if="s.score_total !== null" :class="scoreClass(s.score_total)">{{ s.score_total.toFixed(1) }}</strong>
                   <span v-else class="muted">-</span>
                 </td>
-                <td class="muted" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.score_summary || '-' }}</td>
+                <td>
+                  <span v-if="s.avg_cpm" :class="cpmClass(s.avg_cpm)">
+                    {{ s.avg_cpm }} <span class="muted" style="font-size:11px">字/分</span>
+                  </span>
+                  <span v-else class="muted">-</span>
+                  <div v-if="s.typing_samples > 0" class="muted" style="font-size:11px">
+                    采 {{ s.typing_samples }} 条
+                  </div>
+                </td>
+                <td>
+                  <span v-if="s.avg_response_ms !== null && s.avg_response_ms !== undefined" :class="respClass(s.avg_response_ms)">
+                    {{ (s.avg_response_ms / 1000).toFixed(1) }}<span class="muted" style="font-size:11px">秒</span>
+                  </span>
+                  <span v-else class="muted">-</span>
+                </td>
+                <td>
+                  <span v-if="s.quick_reply_ratio !== null && s.quick_reply_ratio !== undefined">
+                    {{ Math.round(s.quick_reply_ratio * 100) }}%
+                  </span>
+                  <span v-else class="muted">-</span>
+                </td>
+                <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.score_summary || '-' }}</td>
                 <td>{{ fmt(s.started_at) }}</td>
                 <td><button class="btn sm" @click="onViewScore(s.id)">查看</button></td>
               </tr>
@@ -401,6 +424,40 @@
               </div>
               <div v-else class="empty" style="margin-bottom:12px">该训练尚未评分</div>
 
+              <!-- v0.11 键入统计聚合（详情顶部） -->
+              <div v-if="detailTypingSummary" class="card" style="background:linear-gradient(135deg, #f0f7ff 0%, #f9f5ff 100%);margin-bottom:12px;border:1px solid #d6e4ff">
+                <div class="page-sub" style="margin-bottom:8px">📊 本次训练键入统计</div>
+                <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;text-align:center">
+                  <div>
+                    <div style="font-size:18px;font-weight:bold" :class="detailTypingSummary.cpmClass">
+                      {{ detailTypingSummary.cpmText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">平均打字（字/分）</div>
+                  </div>
+                  <div>
+                    <div style="font-size:18px;font-weight:bold" :class="detailTypingSummary.respClass">
+                      {{ detailTypingSummary.respText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">平均回复（秒）</div>
+                  </div>
+                  <div>
+                    <div style="font-size:18px;font-weight:bold">
+                      {{ detailTypingSummary.quickReplyText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">快捷短语占比</div>
+                  </div>
+                  <div>
+                    <div style="font-size:18px;font-weight:bold;color:var(--muted)">
+                      {{ detailTypingSummary.samplesText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">有效 / 总客服消息</div>
+                  </div>
+                </div>
+                <div v-if="!detailTypingSummary.hasAnyTyping" class="muted" style="font-size:12px;margin-top:8px;text-align:center">
+                  💡 该训练用 v0.11 之前开启的老数据，键入字段均为 NULL（升级后下次训练自动采集）
+                </div>
+              </div>
+
               <!-- 对话记录 -->
               <div class="page-sub" style="margin-bottom:8px">对话记录（{{ scoreDetail.messages.length }} 条）</div>
               <div style="max-height:360px;overflow-y:auto">
@@ -410,8 +467,22 @@
                   style="margin-bottom:8px;padding:8px 12px;border-radius:6px"
                   :style="m.role === 'agent' ? 'background:var(--bg)' : 'background:var(--bg-soft, #f0f7ff);border-left:3px solid var(--primary)'"
                 >
-                  <div class="muted" style="font-size:12px;margin-bottom:2px">
-                    {{ m.role === 'agent' ? '客服' : 'AI客户' }} · {{ fmt(m.created_at) }}
+                  <div class="muted" style="font-size:12px;margin-bottom:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span>{{ m.role === 'agent' ? '客服' : 'AI客户' }} · {{ fmt(m.created_at) }}</span>
+                    <!-- v0.11 客服消息键入标签 -->
+                    <template v-if="m.role === 'agent' && m.typing">
+                      <span v-if="m.typing.cpm" class="tag" style="background:#e0f2fe;color:#0369a1;font-size:10px;padding:1px 6px">
+                        ⌨️ {{ m.typing.cpm }} 字/分
+                      </span>
+                      <span v-else-if="m.typing.keystroke_count != null && m.typing.keystroke_count >= 3" class="tag" style="background:#fef3c7;color:#b07000;font-size:10px;padding:1px 6px">
+                        ⌨️ {{ m.typing.keystroke_count }} 次按键
+                      </span>
+                      <span v-if="m.typing.is_paste" class="tag" style="background:#fee2e2;color:#b91c1c;font-size:10px;padding:1px 6px">含粘贴</span>
+                      <span v-if="m.typing.is_quick_reply" class="tag" style="background:#e9d5ff;color:#7e22ce;font-size:10px;padding:1px 6px">快捷短语</span>
+                      <span v-if="m.typing.response_duration_ms != null" class="muted" style="font-size:11px">
+                        ⏱ 回复 {{ (m.typing.response_duration_ms / 1000).toFixed(1) }}秒
+                      </span>
+                    </template>
                   </div>
                   <div>{{ m.content }}</div>
                 </div>
@@ -1113,6 +1184,49 @@ function scoreClass(score) {
   if (score >= 60) return 'warn-text'
   return 'danger-text'
 }
+// v0.11 键入统计的视觉等级（与训练成绩语义不同：字/分越高越好，回复越短越好）
+function cpmClass(cpm) {
+  if (cpm >= 60) return 'ok-text'      // ≥ 60 字/分 优秀
+  if (cpm >= 30) return 'warn-text'    // 30~60 一般
+  return 'danger-text'                  // < 30 偏慢
+}
+function respClass(ms) {
+  const sec = ms / 1000
+  if (sec <= 30) return 'ok-text'      // ≤ 30 秒及时
+  if (sec <= 90) return 'warn-text'    // 30~90 一般
+  return 'danger-text'                  // > 90 偏慢
+}
+// v0.11 详情弹窗里的聚合统计
+const detailTypingSummary = computed(() => {
+  const detail = scoreDetail.value
+  if (!detail || !detail.messages) return null
+  const agentMsgs = detail.messages.filter(m => m.role === 'agent')
+  if (!agentMsgs.length) {
+    return { hasAnyTyping: false, cpmText: '-', respText: '-', quickReplyText: '-', samplesText: '0/0', cpmClass: 'muted', respClass: 'muted' }
+  }
+  const withMetrics = agentMsgs.filter(m => m.typing && m.typing.keystroke_count != null)
+  const valid = withMetrics.filter(m => {
+    const t = m.typing
+    return (t.keystroke_count || 0) >= 3 && (t.char_count || 0) >= 5 && !t.is_paste
+  })
+  const cpms = valid.map(m => m.typing.cpm).filter(c => typeof c === 'number' && c > 0)
+  const avgCpm = cpms.length ? Math.round(cpms.reduce((a, b) => a + b, 0) / cpms.length) : null
+  const resp = withMetrics
+    .map(m => m.typing.response_duration_ms)
+    .filter(v => typeof v === 'number' && v >= 0 && v < 10 * 60 * 1000)
+  const avgResp = resp.length ? Math.round(resp.reduce((a, b) => a + b, 0) / resp.length) : null
+  const qr = withMetrics.filter(m => m.typing.is_quick_reply).length
+  const qrRatio = withMetrics.length ? Math.round((qr / withMetrics.length) * 100) : 0
+  return {
+    hasAnyTyping: withMetrics.length > 0,
+    cpmText: avgCpm !== null ? `${avgCpm}` : '-',
+    respText: avgResp !== null ? `${(avgResp / 1000).toFixed(1)}` : '-',
+    quickReplyText: withMetrics.length ? `${qrRatio}% (${qr}/${withMetrics.length})` : '-',
+    samplesText: `${valid.length}/${agentMsgs.length}`,
+    cpmClass: avgCpm == null ? 'muted' : cpmClass(avgCpm),
+    respClass: avgResp == null ? 'muted' : respClass(avgResp),
+  }
+})
 function trendDeltaClass(trend) {
   if (trend === 'up') return 'ok-text'
   if (trend === 'down') return 'danger-text'

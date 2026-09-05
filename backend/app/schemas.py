@@ -116,8 +116,33 @@ class SessionOut(BaseModel):
 
 
 # ---------- 对话消息 ----------
+class TypingMetricsIn(BaseModel):
+    """前端采集的键入统计（v0.11），客户端 UTC ISO 字符串上报。"""
+
+    first_keystroke_at: Optional[str] = None  # ISO 字符串
+    last_keystroke_at: Optional[str] = None
+    keystroke_count: Optional[int] = None
+    char_count: Optional[int] = None
+    is_paste: Optional[bool] = None
+    is_quick_reply: Optional[bool] = None
+
+
 class SendMessageRequest(BaseModel):
     content: str
+    typing_metrics: Optional[TypingMetricsIn] = None  # v0.11 可选
+
+
+class TypingStatsOut(BaseModel):
+    """v0.11 单条消息的键入统计输出。"""
+
+    keystroke_count: Optional[int] = None
+    char_count: Optional[int] = None
+    is_paste: Optional[bool] = None
+    is_quick_reply: Optional[bool] = None
+    typed_duration_ms: Optional[int] = None
+    response_duration_ms: Optional[int] = None
+    # 派生指标（前端展示用，None 表示原始字段缺失无法计算）
+    cpm: Optional[float] = None  # 字/分钟 = char_count / typed_duration_ms × 60 × 1000
 
 
 class MessageOut(BaseModel):
@@ -125,6 +150,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     created_at: datetime
+    typing: Optional[TypingStatsOut] = None  # v0.11 客户端消息才有
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -180,7 +206,14 @@ class ChatImportReply(BaseModel):
 
 # ---------- 管理员：训练成绩查询 ----------
 class AdminSessionListItem(BaseModel):
-    """管理员视角的训练记录列表项（含分数摘要）。"""
+    """管理员视角的训练记录列表项（含分数摘要）。
+
+    v0.11 键入统计：
+    - avg_cpm: 本次训练平均打字速度（字/分钟，仅计入 keystroke>=3 & char>=5 & 非粘贴的有效消息）
+    - avg_response_ms: 本次训练平均回复时长（毫秒）
+    - quick_reply_ratio: 快捷短语填入条数 / 总客服消息条数
+    - typing_samples: 有效键入条数（用于在 Admin 列表展示「N 条有效键入」）
+    """
 
     id: int
     user_id: int
@@ -193,6 +226,11 @@ class AdminSessionListItem(BaseModel):
     message_count: int = 0
     score_total: Optional[float] = None  # None 表示尚未评分
     score_summary: str = ""
+    # v0.11
+    avg_cpm: Optional[float] = None
+    avg_response_ms: Optional[int] = None
+    quick_reply_ratio: Optional[float] = None  # 0~1
+    typing_samples: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 

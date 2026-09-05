@@ -91,14 +91,15 @@ export const getSession = (id) => http.get(`/agent/sessions/${id}`)
 export const listMessages = (sessionId) =>
   http.get(`/agent/sessions/${sessionId}/messages`)
 
-export const sendMessage = (sessionId, content) =>
-  http.post(`/agent/sessions/${sessionId}/messages`, { content })
+export const sendMessage = (sessionId, content, typingMetrics) =>
+  http.post(`/agent/sessions/${sessionId}/messages`, { content, typing_metrics: typingMetrics })
 
 /** v0.3 流式消息：SSE 逐字接收
  * onToken(token): 每收到一个字符调用
  * onDone(data): 流结束时调用，data={done:true, message_id, turn, is_finished}
+ * typingMetrics: v0.11 键入统计，可选
  */
-export const streamMessage = (sessionId, content, onToken, onDone) => {
+export const streamMessage = (sessionId, content, onToken, onDone, typingMetrics) => {
   const token = localStorage.getItem('token')
   // 60秒超时保护，防止 AI 响应慢导致按钮永久禁用
   const controller = new AbortController()
@@ -109,7 +110,7 @@ export const streamMessage = (sessionId, content, onToken, onDone) => {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, typing_metrics: typingMetrics }),
     signal: controller.signal,
   }).then(async (res) => {
     clearTimeout(timeout)
