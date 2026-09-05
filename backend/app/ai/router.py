@@ -58,7 +58,8 @@ def generate_reply_stream(
     )
 
     # ===== 第一层：Quick Reply =====
-    if intent != INTENT_OTHER and intent != INTENT_START:
+    # 守卫：question_script 非空（即剧本题 / 批次训练）时，强制走 LLM，让真实聊天资料真正起作用
+    if intent != INTENT_OTHER and intent != INTENT_START and not question_script:
         reply = get_reply(intent, knowledge, agent_content)
         if reply:
             logger.info("Router: Quick Reply 命中 (intent=%s)", intent)
@@ -67,15 +68,23 @@ def generate_reply_stream(
             return
 
     # ===== 第二层：Cache =====
-    cached = cache.get(intent, agent_content, knowledge_id)
-    if cached:
-        logger.info("Router: Cache 命中 (intent=%s)", intent)
-        yield from _simulated_stream(cached)
-        yield "[DONE]"
-        return
+    # 守卫：剧本模式下绕过缓存——缓存里的旧输出可能根本没按剧本演
+    if not question_script:
+        cached = cache.get(intent, agent_content, knowledge_id)
+        if cached:
+            logger.info("Router: Cache 命中 (intent=%s)", intent)
+            yield from _simulated_stream(cached)
+            yield "[DONE]"
+            return
 
     # ===== 第三层：DeepSeek =====
-    logger.info("Router: Quick/Cache miss → DeepSeek (intent=%s)", intent)
+    if question_script:
+        logger.info(
+            "Router: 剧本模式 → 跳过 Quick/Cache，强制走 LLM (turn=%d, intent=%s)",
+            turn_count, intent,
+        )
+    else:
+        logger.info("Router: Quick/Cache miss → DeepSeek (intent=%s)", intent)
 
     # 未配置 LLM 时：直接走兜底，避免 stream_chat yield None 导致客户沉默
     if not llm.is_llm_enabled():
