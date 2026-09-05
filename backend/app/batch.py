@@ -200,6 +200,9 @@ def review_batch(db: Session, batch_id: int, items: list) -> int:
 
     items: [(question_id, passed: bool), ...]
     返回本次新进/累计错题本条目数（changed 数）。
+
+    v0.16：judgment_flow_enabled=False 时，判定只记录 review_status，
+    不写错题本、不更新掌握度（上线正式启用后再回流）。
     """
     batch = db.query(TrainingBatch).filter(TrainingBatch.id == batch_id).first()
     if not batch:
@@ -212,6 +215,9 @@ def review_batch(db: Session, batch_id: int, items: list) -> int:
         passed = by_qid[bq.question_id]
         bq.review_status = "approved" if passed else "rejected"
         bq.reviewed_at = datetime.utcnow()
+        if not settings.judgment_flow_enabled:
+            # v0.16：判定回流开关关闭——只记状态，不回流错题本/掌握度
+            continue
         if passed:
             _resolve_mistake(db, batch.user_id, bq.question_id)
         else:

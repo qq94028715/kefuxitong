@@ -24,6 +24,132 @@
           <div class="tab" :class="{ active: tab === 'import' }" @click="tab = 'import'">导入语料</div>
         </div>
 
+          <!-- 详情弹窗 -->
+          <div v-if="scoreDetail" class="modal-overlay" @click.self="scoreDetail = null">
+            <div class="modal-card" style="max-width:760px">
+              <div class="modal-header">
+                <strong>训练详情 #{{ scoreDetail.id }}</strong>
+                <span class="muted" style="margin-left:12px">
+                  {{ scoreDetail.username }} · {{ scoreDetail.category_name }} · {{ fmt(scoreDetail.started_at) }}
+                </span>
+              </div>
+
+              <!-- 评分卡片 -->
+              <div v-if="scoreDetail.score" class="card" style="background:var(--bg);margin-bottom:12px">
+                <div class="row" style="align-items:center;margin-bottom:8px">
+                  <div style="font-size:28px;font-weight:bold" :class="scoreClass(scoreDetail.score.total_score)">
+                    {{ scoreDetail.score.total_score.toFixed(1) }}
+                  </div>
+                  <div class="muted" style="margin-left:8px">/ 100</div>
+                </div>
+
+                <!-- 四维评分 -->
+                <div v-if="scoreDetail.score.dimension_scores && Object.keys(scoreDetail.score.dimension_scores).length" style="margin-bottom:12px">
+                  <div v-for="dim in dimConfig" :key="dim.key" style="margin-bottom:6px">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px">
+                      <span>{{ dim.label }}</span>
+                      <span :class="adminDimClass(dim.key)">{{ scoreDetail.score.dimension_scores[dim.key] || 0 }}/{{ dim.max }}</span>
+                    </div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+                      <div :style="{ width: adminDimPercent(dim.key) + '%', height: '100%', background: adminDimColor(dim.key), borderRadius: '3px' }"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label>总评</label>
+                  <div>{{ scoreDetail.score.summary }}</div>
+                </div>
+                <div v-if="scoreDetail.score.advantages?.length" class="field">
+                  <label>优点</label>
+                  <ul>
+                    <li v-for="(t, i) in scoreDetail.score.advantages" :key="i" style="color:var(--success)">{{ t }}</li>
+                  </ul>
+                </div>
+                <div v-if="scoreDetail.score.mistakes?.length" class="field">
+                  <label>不足</label>
+                  <ul>
+                    <li v-for="(t, i) in scoreDetail.score.mistakes" :key="i" style="color:var(--danger)">{{ t }}</li>
+                  </ul>
+                </div>
+                <div v-if="scoreDetail.score.suggestions?.length" class="field">
+                  <label>建议</label>
+                  <ul>
+                    <li v-for="(t, i) in scoreDetail.score.suggestions" :key="i">{{ t }}</li>
+                  </ul>
+                </div>
+              </div>
+              <div v-else class="empty" style="margin-bottom:12px">该训练尚未评分</div>
+
+              <!-- v0.11 键入统计聚合（详情顶部） -->
+              <div v-if="detailTypingSummary" class="card" style="background:linear-gradient(135deg, #f0f7ff 0%, #f9f5ff 100%);margin-bottom:12px;border:1px solid #d6e4ff">
+                <div class="page-sub" style="margin-bottom:8px">📊 本次训练键入统计</div>
+                <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;text-align:center">
+                  <div>
+                    <div style="font-size:18px;font-weight:bold" :class="detailTypingSummary.cpmClass">
+                      {{ detailTypingSummary.cpmText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">平均打字（字/分）</div>
+                  </div>
+                  <div>
+                    <div style="font-size:18px;font-weight:bold" :class="detailTypingSummary.respClass">
+                      {{ detailTypingSummary.respText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">平均回复（秒）</div>
+                  </div>
+                  <div>
+                    <div style="font-size:18px;font-weight:bold">
+                      {{ detailTypingSummary.quickReplyText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">快捷短语占比</div>
+                  </div>
+                  <div>
+                    <div style="font-size:18px;font-weight:bold;color:var(--muted)">
+                      {{ detailTypingSummary.samplesText }}
+                    </div>
+                    <div class="muted" style="font-size:11px">有效 / 总客服消息</div>
+                  </div>
+                </div>
+                <div v-if="!detailTypingSummary.hasAnyTyping" class="muted" style="font-size:12px;margin-top:8px;text-align:center">
+                  💡 该训练用 v0.11 之前开启的老数据，键入字段均为 NULL（升级后下次训练自动采集）
+                </div>
+              </div>
+
+              <!-- 对话记录 -->
+              <div class="page-sub" style="margin-bottom:8px">对话记录（{{ scoreDetail.messages.length }} 条）</div>
+              <div style="max-height:360px;overflow-y:auto">
+                <div
+                  v-for="m in scoreDetail.messages"
+                  :key="m.id"
+                  style="margin-bottom:8px;padding:8px 12px;border-radius:6px"
+                  :style="m.role === 'agent' ? 'background:var(--bg)' : 'background:var(--bg-soft, #f0f7ff);border-left:3px solid var(--primary)'"
+                >
+                  <div class="muted" style="font-size:12px;margin-bottom:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span>{{ m.role === 'agent' ? '客服' : 'AI客户' }} · {{ fmt(m.created_at) }}</span>
+                    <!-- v0.11 客服消息键入标签 -->
+                    <template v-if="m.role === 'agent' && m.typing">
+                      <span v-if="m.typing.cpm" class="tag" style="background:#e0f2fe;color:#0369a1;font-size:10px;padding:1px 6px">
+                        ⌨️ {{ m.typing.cpm }} 字/分
+                      </span>
+                      <span v-else-if="m.typing.keystroke_count != null && m.typing.keystroke_count >= 3" class="tag" style="background:#fef3c7;color:#b07000;font-size:10px;padding:1px 6px">
+                        ⌨️ {{ m.typing.keystroke_count }} 次按键
+                      </span>
+                      <span v-if="m.typing.is_paste" class="tag" style="background:#fee2e2;color:#b91c1c;font-size:10px;padding:1px 6px">含粘贴</span>
+                      <span v-if="m.typing.is_quick_reply" class="tag" style="background:#e9d5ff;color:#7e22ce;font-size:10px;padding:1px 6px">快捷短语</span>
+                      <span v-if="m.typing.response_duration_ms != null" class="muted" style="font-size:11px">
+                        ⏱ 回复 {{ (m.typing.response_duration_ms / 1000).toFixed(1) }}秒
+                      </span>
+                    </template>
+                  </div>
+                  <div>{{ m.content }}</div>
+                </div>
+              </div>
+
+              <div class="row" style="justify-content:flex-end;margin-top:12px">
+                <button class="btn ghost" @click="scoreDetail = null">关闭</button>
+              </div>
+            </div>
+          </div>
         <!-- 客服账号 -->
         <div v-if="tab === 'agents'">
           <div class="page-title">客服账号管理</div>
@@ -367,132 +493,6 @@
           </table>
           <div v-else class="empty">暂无训练记录</div>
 
-          <!-- 详情弹窗 -->
-          <div v-if="scoreDetail" class="modal-overlay" @click.self="scoreDetail = null">
-            <div class="modal-card" style="max-width:760px">
-              <div class="modal-header">
-                <strong>训练详情 #{{ scoreDetail.id }}</strong>
-                <span class="muted" style="margin-left:12px">
-                  {{ scoreDetail.username }} · {{ scoreDetail.category_name }} · {{ fmt(scoreDetail.started_at) }}
-                </span>
-              </div>
-
-              <!-- 评分卡片 -->
-              <div v-if="scoreDetail.score" class="card" style="background:var(--bg);margin-bottom:12px">
-                <div class="row" style="align-items:center;margin-bottom:8px">
-                  <div style="font-size:28px;font-weight:bold" :class="scoreClass(scoreDetail.score.total_score)">
-                    {{ scoreDetail.score.total_score.toFixed(1) }}
-                  </div>
-                  <div class="muted" style="margin-left:8px">/ 100</div>
-                </div>
-
-                <!-- 四维评分 -->
-                <div v-if="scoreDetail.score.dimension_scores && Object.keys(scoreDetail.score.dimension_scores).length" style="margin-bottom:12px">
-                  <div v-for="dim in dimConfig" :key="dim.key" style="margin-bottom:6px">
-                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px">
-                      <span>{{ dim.label }}</span>
-                      <span :class="adminDimClass(dim.key)">{{ scoreDetail.score.dimension_scores[dim.key] || 0 }}/{{ dim.max }}</span>
-                    </div>
-                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-                      <div :style="{ width: adminDimPercent(dim.key) + '%', height: '100%', background: adminDimColor(dim.key), borderRadius: '3px' }"></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="field">
-                  <label>总评</label>
-                  <div>{{ scoreDetail.score.summary }}</div>
-                </div>
-                <div v-if="scoreDetail.score.advantages?.length" class="field">
-                  <label>优点</label>
-                  <ul>
-                    <li v-for="(t, i) in scoreDetail.score.advantages" :key="i" style="color:var(--success)">{{ t }}</li>
-                  </ul>
-                </div>
-                <div v-if="scoreDetail.score.mistakes?.length" class="field">
-                  <label>不足</label>
-                  <ul>
-                    <li v-for="(t, i) in scoreDetail.score.mistakes" :key="i" style="color:var(--danger)">{{ t }}</li>
-                  </ul>
-                </div>
-                <div v-if="scoreDetail.score.suggestions?.length" class="field">
-                  <label>建议</label>
-                  <ul>
-                    <li v-for="(t, i) in scoreDetail.score.suggestions" :key="i">{{ t }}</li>
-                  </ul>
-                </div>
-              </div>
-              <div v-else class="empty" style="margin-bottom:12px">该训练尚未评分</div>
-
-              <!-- v0.11 键入统计聚合（详情顶部） -->
-              <div v-if="detailTypingSummary" class="card" style="background:linear-gradient(135deg, #f0f7ff 0%, #f9f5ff 100%);margin-bottom:12px;border:1px solid #d6e4ff">
-                <div class="page-sub" style="margin-bottom:8px">📊 本次训练键入统计</div>
-                <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;text-align:center">
-                  <div>
-                    <div style="font-size:18px;font-weight:bold" :class="detailTypingSummary.cpmClass">
-                      {{ detailTypingSummary.cpmText }}
-                    </div>
-                    <div class="muted" style="font-size:11px">平均打字（字/分）</div>
-                  </div>
-                  <div>
-                    <div style="font-size:18px;font-weight:bold" :class="detailTypingSummary.respClass">
-                      {{ detailTypingSummary.respText }}
-                    </div>
-                    <div class="muted" style="font-size:11px">平均回复（秒）</div>
-                  </div>
-                  <div>
-                    <div style="font-size:18px;font-weight:bold">
-                      {{ detailTypingSummary.quickReplyText }}
-                    </div>
-                    <div class="muted" style="font-size:11px">快捷短语占比</div>
-                  </div>
-                  <div>
-                    <div style="font-size:18px;font-weight:bold;color:var(--muted)">
-                      {{ detailTypingSummary.samplesText }}
-                    </div>
-                    <div class="muted" style="font-size:11px">有效 / 总客服消息</div>
-                  </div>
-                </div>
-                <div v-if="!detailTypingSummary.hasAnyTyping" class="muted" style="font-size:12px;margin-top:8px;text-align:center">
-                  💡 该训练用 v0.11 之前开启的老数据，键入字段均为 NULL（升级后下次训练自动采集）
-                </div>
-              </div>
-
-              <!-- 对话记录 -->
-              <div class="page-sub" style="margin-bottom:8px">对话记录（{{ scoreDetail.messages.length }} 条）</div>
-              <div style="max-height:360px;overflow-y:auto">
-                <div
-                  v-for="m in scoreDetail.messages"
-                  :key="m.id"
-                  style="margin-bottom:8px;padding:8px 12px;border-radius:6px"
-                  :style="m.role === 'agent' ? 'background:var(--bg)' : 'background:var(--bg-soft, #f0f7ff);border-left:3px solid var(--primary)'"
-                >
-                  <div class="muted" style="font-size:12px;margin-bottom:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                    <span>{{ m.role === 'agent' ? '客服' : 'AI客户' }} · {{ fmt(m.created_at) }}</span>
-                    <!-- v0.11 客服消息键入标签 -->
-                    <template v-if="m.role === 'agent' && m.typing">
-                      <span v-if="m.typing.cpm" class="tag" style="background:#e0f2fe;color:#0369a1;font-size:10px;padding:1px 6px">
-                        ⌨️ {{ m.typing.cpm }} 字/分
-                      </span>
-                      <span v-else-if="m.typing.keystroke_count != null && m.typing.keystroke_count >= 3" class="tag" style="background:#fef3c7;color:#b07000;font-size:10px;padding:1px 6px">
-                        ⌨️ {{ m.typing.keystroke_count }} 次按键
-                      </span>
-                      <span v-if="m.typing.is_paste" class="tag" style="background:#fee2e2;color:#b91c1c;font-size:10px;padding:1px 6px">含粘贴</span>
-                      <span v-if="m.typing.is_quick_reply" class="tag" style="background:#e9d5ff;color:#7e22ce;font-size:10px;padding:1px 6px">快捷短语</span>
-                      <span v-if="m.typing.response_duration_ms != null" class="muted" style="font-size:11px">
-                        ⏱ 回复 {{ (m.typing.response_duration_ms / 1000).toFixed(1) }}秒
-                      </span>
-                    </template>
-                  </div>
-                  <div>{{ m.content }}</div>
-                </div>
-              </div>
-
-              <div class="row" style="justify-content:flex-end;margin-top:12px">
-                <button class="btn ghost" @click="scoreDetail = null">关闭</button>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- 成绩趋势 -->

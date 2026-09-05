@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     adaptive_consolidate_ratio: float = 0.2  # 及格巩固（难度升级）
     adaptive_new_ratio: float = 0.1  # 新题/随机巩固
 
+    # 主管判定回流开关（v0.16）：暂时关闭 = 判定只记状态，不写错题本/不更新掌握度
+    # 上线正式启用后设 TRUE，判定结果才会回流错题本复练 + 掌握度 EMA
+    judgment_flow_enabled: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
