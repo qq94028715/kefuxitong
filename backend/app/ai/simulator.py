@@ -10,9 +10,13 @@ LLM 模式：用 customer.txt prompt，多轮自然对话，会追问。
 """
 import hashlib
 import json
+import logging
 import random
+import re
 
 from . import llm, prompt
+
+logger = logging.getLogger(__name__)
 
 # 对话结束标记（simulator 返回此串表示客户主动结束）
 END_MARKER = "[END]"
@@ -171,22 +175,114 @@ def _reply_with_llm(
     return llm.chat(messages, temperature=0.8, max_tokens=200)
 
 
-def _build_question_script_section(question_script: str) -> str:
-    """构造客户剧本注入段落。
+# ---------- 剧本清洗与话题提取 ----------
 
-    剧本非空时，指示 AI 客户以真实聊天记录为蓝本衍生扮演；
-    为空时返回空串，不影响无题目的旧流程。
+# 剧本行角色前缀：[客户] / [客服]
+_ROLE_RE = re.compile(r"^\[(客户|客服)\]\s*")
+# 噪声：卡片消息 / 图片 / 视频占位
+_SCRIPT_NOISE = (
+    "【卡片消息】", "【图片】", "【视频】", "[图片]", "[视频]", "<img",
+    "[表情]", "【表情】", "[文件]", "[语音]",
+)
+# 时间戳：2026-09-04 16:53:29  或  2026-9-4 16:53  等
+_TS_RE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}(:\d{2})?$")
+# 短时间串（仅时分，无日期）如 "16:53:29"
+_TS_RE_SHORT = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
+# URL / 图片链接 / 电商商品链接
+_URL_RE = re.compile(r"https?://\S+|item\.taobao\.com\S*|//\S+\.(jpg|png|jpeg|gif|webp)", re.I)
+# 客户短应答，无信息量，提取话题时忽略
+_CUSTOMER_STOP = {
+    "嗯", "嗯嗯", "嗯好", "好", "好的", "好嘞", "可以", "行", "行的",
+    "ok", "OK", "哦", "噢", "哦哦", "谢谢", "谢谢了", "再见", "拜拜",
+}
+
+
+def _clean_script_text(script: str) -> str:
+    """清洗剧本脏数据：剔除时间戳/卡片/图片/链接/空行，只保留客服客户的真实文字。
+
+    剧本由 format_script 生成，每行以 [客户] 或 [客服] 开头。清洗后仍保持
+    该行格式，供后续提取话题与注入 prompt。脏行直接丢弃（不影响其他行）。
     """
-    if not question_script:
+    out = []
+    for ln in script.splitlines():
+        t = ln.strip()
+        if not t:
+            continue
+        m = _ROLE_RE.match(t)
+        if not m:
+            continue  # 非标准角色行，丢弃
+        body = t[m.end():].strip()
+        if not body:
+            continue
+        # 噪声识别
+        if body in _SCRIPT_NOISE or any(n in body for n in ("【卡片消息】", "【图片】", "【视频】")):
+            continue
+        if _TS_RE.match(body) or _TS_RE_SHORT.match(body):
+            continue
+        if _URL_RE.search(body):
+            continue
+        # 纯符号/纯数字且无中文，大概率是图片残留
+        if not re.search(r"[\u4e00-\u9fffA-Za-z]", body):
+            continue
+        out.append(f"[{m.group(1)}] {body}")
+    return "\n".join(out)
+
+
+def _extract_customer_topics(cleaned: str) -> list[str]:
+    """从清洗后的剧本提取客户真实说过的话题清单（去重、去废话、截断）。"""
+    topics: list[str] = []
+    seen: set[str] = set()
+    for ln in cleaned.splitlines():
+        if not ln.startswith("[客户]"):
+            continue
+        body = ln[len("[客户]"):].strip()
+        if not body or len(body) < 3:
+            continue
+        if body in _CUSTOMER_STOP:
+            continue
+        if body in seen:
+            continue
+        seen.add(body)
+        topics.append(body)
+    return topics[:12]
+
+
+def _build_question_script_section(question_script: str) -> str:
+    """构造客户剧本注入段落（清洗 + 客户关注点清单 + 强约束纪律）。
+
+    剧本非空时：清洗脏数据 → 提取客户真实话题 → 指示 AI 客户严格以剧本
+    为准扮演，禁止问剧本之外的问题、禁止重复已确认信息。
+    为空时返回空串，不影响无剧本的自由训练旧流程。
+    """
+    if not question_script or not question_script.strip():
         return ""
+    cleaned = _clean_script_text(question_script)
+    if not cleaned:
+        return ""
+    topics = _extract_customer_topics(cleaned)
+    topics_section = ""
+    if topics:
+        topics_section = (
+            "【剧本中客户真实提出/关心过的话题（你只能在这些话题内与客服沟通）】\n"
+            + "\n".join(f"- {t}" for t in topics)
+            + "\n\n"
+        )
     return (
-        "【客户剧本参考（真实聊天记录，你是其中的客户）】\n"
-        "下面是一段真实客服与客户的聊天记录，你就是其中的那位客户。\n"
-        "你必须保持这位客户的需求、身份、性格、异议和推进节奏，尽量还原其说话方式；\n"
-        "不要逐字复读剧本，而是根据客服当前回答自然衍生后续对话，顺着剧本的走向走。\n"
-        "如果剧本中的客户最后成交了，你也倾向于促成成交；如果剧本中的客户流失了，\n"
-        "你要在合适的时机表达犹豫、质疑或离开的意向，考察客服能否挽回。\n"
-        f"【剧本原文】\n{question_script}"
+        "【客户剧本参考（真实聊天记录，你就是其中的那位客户）】\n"
+        "下面是一段真实客服与客户的聊天记录，你就是其中的那位客户。\n\n"
+        "以下【剧本纪律】优先于上文『根据知识库产生需求』的通用说明，务必遵守：\n"
+        "1. 你的身份、需求、关注点和说话风格，完全以剧本中的客户为准。\n"
+        "   剧本客户没提过的产品、材质、规格、服务，你一律不主动涉及。\n"
+        "2. 你只能围绕剧本中客户真实提出过的话题与客服沟通；\n"
+        "   严禁凭空提出剧本之外的新需求或新问题。\n"
+        "3. 客服已经回答清楚、你也认可的信息（如寿命、材质、交期、价格、数量），\n"
+        "   绝对不要再重复问；顺着客服的上一句回答自然承接下一句。\n"
+        "4. 不要因为知识库里写了某种参数，就在剧本客户没问到的情况下主动抛出。\n"
+        "5. 如果剧本中的客户最终成交，你倾向促成；如果流失，在合适时机表达\n"
+        "   犹豫、质疑或离开意向，考察客服能否挽回。\n\n"
+        f"{topics_section}"
+        "【剧本原文（已清洗，仅保留客服/客户真实文字，脏数据已剔除）】\n"
+        f"{cleaned}"
     )
 
 
