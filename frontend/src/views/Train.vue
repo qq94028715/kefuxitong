@@ -21,7 +21,7 @@
           </div>
 
           <!-- 批次状态条 -->
-          <div v-if="progress.has_batch" class="batch-status">
+          <div v-if="progress && progress.has_batch" class="batch-status">
             <div class="batch-status-row">
               <span class="tag" :class="batchStatusClass(progress.batch.status)">
                 {{ batchStatusLabel(progress.batch.status) }}
@@ -41,7 +41,7 @@
           </div>
 
           <!-- 等待主管判定 -->
-          <div v-if="progress.has_batch && progress.batch.status === 'awaiting_review'" class="panel-wait">
+          <div v-if="progress && progress.has_batch && progress.batch.status === 'awaiting_review'" class="panel-wait">
             <div class="muted" style="font-size:15px">本批 20 题已练完，等待主管判定后才能开始下一批。</div>
             <button class="btn ghost" style="margin-top:12px" @click="loadProgress">刷新状态</button>
           </div>
@@ -122,7 +122,7 @@
           </div>
 
           <!-- 输入区 -->
-          <div v-if="session.status !== 'completed'" class="row" style="margin-top:12px">
+          <div v-if="session && session.status !== 'completed'" class="row" style="margin-top:12px">
             <input
               class="input"
               v-model="inputText"
@@ -220,7 +220,7 @@ const username = localStorage.getItem('username') || '客服'
 
 const cats = ref([])
 const selectedCatId = ref(null)
-const progress = ref(null)
+const progress = ref({ has_batch: false, done_count: 0, mistake_count: 0, can_start_new: true })
 const starting = ref(false)
 
 // 对话状态
