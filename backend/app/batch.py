@@ -17,6 +17,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from .ai import adaptive, mastery
+from .config import settings
 from .models import (
     BatchQuestion,
     ChatSession,
@@ -25,8 +26,6 @@ from .models import (
     Question,
     TrainingBatch,
 )
-
-BATCH_SIZE = 20  # 每批题数（默认 20 题）
 MIN_QUESTIONS_TO_START = 1  # 题库至少多少题才能开批
 
 
@@ -102,7 +101,9 @@ def create_batch(db: Session, user_id: int, category_id: int) -> TrainingBatch:
     Raises: ValueError 当该品类题库为空。
     """
     sync_questions(db, category_id)
-    question_ids = adaptive.plan_batch(db, user_id, category_id, size=BATCH_SIZE)
+    question_ids = adaptive.plan_batch(
+        db, user_id, category_id, size=settings.batch_size
+    )
 
     batch = TrainingBatch(
         user_id=user_id,

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     max_dialogue_turns: int = 20  # 单次训练最大对话轮数（防止无限聊）
     min_dialogue_turns: int = 4  # 至少聊几轮才允许结束评分
     stream_delay: float = 0.03  # 逐字流式速度（秒/字符），可用 .env 覆盖，免重新部署
+    batch_size: int = 20  # 每批题数（组卷大小，调试时可临时改小）
 
     # ---------- 掌握度引擎（v0.8）----------
     mastery_alpha: float = 0.3  # EMA 学习率（新判定权重），驳回时自动翻倍
