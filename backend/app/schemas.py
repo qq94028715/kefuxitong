@@ -24,6 +24,17 @@ class AgentCreate(BaseModel):
     password: str
 
 
+class AgentPasswordUpdate(BaseModel):
+    """管理员重置客服密码。"""
+    password: str
+
+
+class SelfPasswordUpdate(BaseModel):
+    """用户修改自己的密码（需校验原密码）。"""
+    old_password: str
+    new_password: str
+
+
 class AgentOut(BaseModel):
     id: int
     username: str

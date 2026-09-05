@@ -4,6 +4,7 @@
       <div class="brand">客服训练系统 · 管理后台</div>
       <div class="actions">
         <span>{{ username }}</span>
+        <button class="btn ghost sm" @click="onChangeSelfPassword">改密码</button>
         <button class="btn ghost sm" @click="logout">退出</button>
       </div>
     </div>
@@ -41,11 +42,31 @@
                 <td>{{ a.id }}</td>
                 <td>{{ a.username }}</td>
                 <td>{{ fmt(a.created_at) }}</td>
-                <td><button class="btn danger sm" @click="onDeleteAgent(a.id)">删除</button></td>
+                <td>
+                  <button class="btn sm" @click="startResetPwd(a)">改密码</button>
+                  <button class="btn danger sm" @click="onDeleteAgent(a.id)">删除</button>
+                </td>
               </tr>
             </tbody>
           </table>
           <div v-else class="empty">暂无客服账号，请在上方新增</div>
+
+          <!-- 重置客服密码 -->
+          <div v-if="pwdTarget" class="row" style="margin-top: 12px">
+            <span class="page-sub" style="flex: 0 0 auto">
+              重置「{{ pwdTarget.username }}」的密码：
+            </span>
+            <input
+              class="input"
+              v-model="newPwd"
+              placeholder="新密码（至少 4 位）"
+              type="password"
+              style="max-width: 200px"
+              @keyup.enter="onResetPwd"
+            />
+            <button class="btn" style="flex: 0 0 auto" @click="onResetPwd">确认</button>
+            <button class="btn ghost sm" @click="pwdTarget = null">取消</button>
+          </div>
         </div>
 
         <!-- 训练分类 -->
@@ -789,7 +810,7 @@ import { ref, reactive, onMounted, computed, nextTick, onBeforeUnmount, watch } 
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import {
-  listAgents, createAgent, deleteAgent,
+  listAgents, createAgent, deleteAgent, resetAgentPassword, changeSelfPassword,
   listCategoriesAdmin, createCategory, deleteCategory,
   listMaterials, uploadMaterial, deleteMaterial, getMaterial, updateMaterial,
   getKnowledge, extractKnowledge,
@@ -807,6 +828,8 @@ const tab = ref('agents')
 
 const agents = ref([])
 const agentForm = reactive({ username: '', password: '' })
+const pwdTarget = ref(null) // 正在改密码的客服账号
+const newPwd = ref('')
 
 const cats = ref([])
 const catForm = reactive({ name: '', description: '' })
@@ -898,6 +921,45 @@ async function onDeleteAgent(id) {
   if (!confirm('确认删除该客服账号？')) return
   await deleteAgent(id)
   await loadAgents()
+}
+
+function startResetPwd(agent) {
+  pwdTarget.value = agent
+  newPwd.value = ''
+}
+
+async function onResetPwd() {
+  const pwd = (newPwd.value || '').trim()
+  if (pwd.length < 4) {
+    alert('密码至少 4 位')
+    return
+  }
+  try {
+    await resetAgentPassword(pwdTarget.value.id, pwd)
+    alert(`已重置「${pwdTarget.value.username}」的密码`)
+    pwdTarget.value = null
+    newPwd.value = ''
+  } catch (e) {
+    alert('重置失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+// 管理员修改自己的登录密码
+async function onChangeSelfPassword() {
+  const oldPwd = prompt('请输入当前密码：')
+  if (!oldPwd) return
+  const pwd = prompt('请输入新密码（至少 4 位）：')
+  if (!pwd) return
+  if (pwd.trim().length < 4) {
+    alert('新密码至少 4 位')
+    return
+  }
+  try {
+    await changeSelfPassword({ old_password: oldPwd, new_password: pwd.trim() })
+    alert('密码已修改，下次登录请使用新密码')
+  } catch (e) {
+    alert('修改失败：' + (e?.response?.data?.detail || e.message))
+  }
 }
 
 async function loadCats() {

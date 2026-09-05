@@ -27,11 +27,14 @@ http.interceptors.response.use(
 // ---------- 认证 ----------
 export const adminLogin = (data) => http.post('/admin/login', data)
 export const agentLogin = (data) => http.post('/agent/login', data)
+export const changeSelfPassword = (data) => http.post('/auth/change-password', data)
 
 // ---------- 管理员：客服账号 ----------
 export const listAgents = () => http.get('/admin/agents')
 export const createAgent = (data) => http.post('/admin/agents', data)
 export const deleteAgent = (id) => http.delete(`/admin/agents/${id}`)
+export const resetAgentPassword = (id, password) =>
+  http.put(`/admin/agents/${id}/password`, { password })
 
 // ---------- 分类 ----------
 export const listCategoriesAdmin = () => http.get('/admin/categories')

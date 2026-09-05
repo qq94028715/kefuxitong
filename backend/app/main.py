@@ -35,6 +35,7 @@ from .ai.router import generate_reply_stream
 from .ai.simulator import END_MARKER, generate_customer_reply, SUMMARY_THRESHOLD, summarize_older
 from .auth import (
     create_access_token,
+    get_current_user,
     hash_password,
     require_admin,
     require_agent,
@@ -65,6 +66,7 @@ from .schemas import (
     AgentBatchProgress,
     AgentCreate,
     AgentOut,
+    AgentPasswordUpdate,
     BatchQuestionOut,
     BatchStartReply,
     BatchStartRequest,
@@ -96,6 +98,7 @@ from .schemas import (
     ScoreTrendsResponse,
     ScoreTrendSeries,
     ScoreTrendPoint,
+    SelfPasswordUpdate,
     SendMessageReply,
     SendMessageRequest,
     SessionCreateRequest,
@@ -355,6 +358,26 @@ def admin_login(req: LoginRequest, db: Session = Depends(get_db)):
     return TokenResponse(access_token=token, role=user.role, username=user.username)
 
 
+# ---------- 修改自己的密码（管理员 / 客服通用） ----------
+@app.post("/api/auth/change-password")
+def change_self_password(
+    req: SelfPasswordUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """当前登录用户修改自己的密码，需校验原密码。"""
+    if not verify_password(req.old_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="原密码不正确")
+
+    new_pwd = (req.new_password or "").strip()
+    if len(new_pwd) < 4:
+        raise HTTPException(status_code=400, detail="新密码至少 4 位")
+
+    user.password_hash = hash_password(new_pwd)
+    db.commit()
+    return {"detail": "密码已修改", "username": user.username}
+
+
 # ---------- 客服账号 ----------
 @app.get("/api/admin/agents", response_model=list[AgentOut])
 def list_agents(_: User = Depends(require_admin), db: Session = Depends(get_db)):
@@ -374,6 +397,30 @@ def create_agent(
     db.commit()
     db.refresh(user)
     return user
+
+
+@app.put("/api/admin/agents/{agent_id}/password")
+def reset_agent_password(
+    agent_id: int,
+    req: AgentPasswordUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员重置客服密码（无需知道原密码）。
+
+    只作用于 role=agent 的账号，避免误改管理员。
+    """
+    user = db.query(User).filter(User.id == agent_id, User.role == "agent").first()
+    if not user:
+        raise HTTPException(status_code=404, detail="客服账号不存在")
+
+    pwd = (req.password or "").strip()
+    if len(pwd) < 4:
+        raise HTTPException(status_code=400, detail="密码至少 4 位")
+
+    user.password_hash = hash_password(pwd)
+    db.commit()
+    return {"detail": "密码已重置", "id": user.id, "username": user.username}
 
 
 @app.delete("/api/admin/agents/{agent_id}")
