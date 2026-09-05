@@ -18,6 +18,8 @@ const routes = [
     component: () => import('./views/Mastery.vue'),
     meta: { role: 'agent' },
   },
+  // 兜底路由：任何未注册的地址（含打错字的 #/trainpan）统一回登录页，避免白屏
+  { path: '/:pathMatch(.*)*', redirect: '/login' },
 ]
 
 const router = createRouter({
