@@ -57,3 +57,7 @@ backup/*
 *.db-journal
 *.db-shm
 *.db-wal
+*.db.*
+# 运行数据库目录：整体不入库，只保留占位文件（注意用 data/* 而非 data/，否则 ! 例外不生效）
+backend/data/*
+!backend/data/.gitkeep

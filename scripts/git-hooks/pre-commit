@@ -1,0 +1,19 @@
+#!/bin/sh
+# 每次 git commit 前自动递增前端版本号（frontend/src/version.js）。
+# 跳过本次自增：  SKIP_VERSION_BUMP=1 git commit -m "..."
+# 找不到 python 时静默跳过，不阻塞提交。
+
+PY=""
+for c in python python3 py; do
+    if command -v "$c" >/dev/null 2>&1; then
+        PY="$c"
+        break
+    fi
+done
+
+[ -z "$PY" ] && exit 0
+
+"$PY" scripts/bump_version.py || exit 0
+git add frontend/src/version.js
+
+exit 0

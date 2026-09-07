@@ -507,3 +507,19 @@ th {
   margin-bottom: 4px;
   line-height: 1.5;
 }
+
+/* ===== 全局版本号页脚 ===== */
+.app-version {
+  position: fixed;
+  right: 10px;
+  bottom: 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-soft, #6b7280);
+  opacity: 0.55;
+  pointer-events: none; /* 不拦截任何点击 */
+  user-select: none;
+  z-index: 9999;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
