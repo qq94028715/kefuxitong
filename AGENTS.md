@@ -84,6 +84,8 @@ npm run dev
 - **续接训练**：`batch.py:start_question` 优先级是「续接 in_progress session → 开新题 → None」，别改回只挑 `session_id is None`。续接时用 `existing_msg_count > 0` 判断是否跳过 AI 开场白。
 - **SQLite WAL**：拷贝/打包 db 前先 `PRAGMA wal_checkpoint(TRUNCATE)` + `integrity_check`，否则 -wal 未合并会丢数据。
 - **git remote-tracking 可能过期**：`git log origin/main..HEAD` 数量对不上时，先 `git fetch` 检查 `merge-base`，必要时 `git update-ref refs/remotes/origin/main <远端真实SHA>`。push 加 `GIT_TERMINAL_PROMPT=0` 防卡密码输入。
+- **vite 代理 target 必须写 `127.0.0.1`，不能写 `localhost`**：Node 会把 `localhost` 解析成 IPv6 的 `::1`，而 uvicorn 绑 `0.0.0.0` 只监听 IPv4，结果是 `ECONNREFUSED ::1:8000` —— 页面能打开但**所有 API 返回 500，登录都用不了**。症状很容易误判成后端挂了。
+- **服务打不开先跑体检**：`scripts/check_health.py`（或双击 `scripts/check_health.bat`），一条命令看出后端/前端/代理/端口占用/数据库谁出问题。本机有 HTTP 代理，脚本已强制绕过（curl 自查记得加 `--noproxy '*'`，否则一律 502 误报）。
 - **别用 `git add -A`**：`backend/data/` 下有 `*.db.before_xxx` 备份副本，会绕过 `.gitignore` 的 `*.db` 规则被误提交。提交前用 `git status --short` 扫一眼，或直接 `git add <具体文件>`。
 - **`.gitignore` 不支持行尾注释**：写 `*.db    # 注释` 会让整条规则失效（pattern 变成含 `#` 的整串），注释必须独占一行。另外排除目录要写 `backend/data/*` 而非 `backend/data/`，否则 `!backend/data/.gitkeep` 例外不生效（目录被整体排除后 git 不会进去）。
 
