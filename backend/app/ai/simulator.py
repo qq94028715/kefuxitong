@@ -21,6 +21,20 @@ logger = logging.getLogger(__name__)
 # 对话结束标记（simulator 返回此串表示客户主动结束）
 END_MARKER = "[END]"
 
+# 多条连发分隔符：真人微信习惯一口气分几条发，AI 用此分隔，后端拆成多条气泡
+BUBBLE_SEP = "|||"
+
+
+def split_customer_bubbles(text: str) -> list[str]:
+    """把客户回复按 BUBBLE_SEP 拆成多条气泡内容（去空、去首尾空白）。
+
+    未使用分隔符时返回单元素列表，行为与旧版一致。
+    """
+    if not text:
+        return []
+    parts = [p.strip() for p in text.split(BUBBLE_SEP)]
+    return [p for p in parts if p]
+
 # 客户性格列表：影响客户表达方式，让对话更真实多样
 CUSTOMER_PERSONALITIES = [
     "你性格急躁，不喜欢等，说话简短直接，容易不耐烦。如果客服啰嗦或答不到点子上，你会催促。",
@@ -153,7 +167,10 @@ def _reply_with_llm(
     history_text = build_history_for_llm(history, conversation_summary)
     personality = get_personality(history)
     profiles_section = _build_customer_profiles_section(knowledge)
-    script_section = _build_question_script_section(question_script)
+    # 剧本清洗一次，同时供「剧本纪律」与「语气范本」使用
+    cleaned = _clean_script_text(question_script) if question_script else ""
+    script_section = _build_question_script_section(question_script, cleaned)
+    style_section = _build_speaking_style_section(cleaned)
     p = prompt.load_prompt(
         "customer",
         knowledge_json=knowledge_json,
@@ -164,21 +181,29 @@ def _reply_with_llm(
         customer_personality=personality,
         customer_profiles_section=profiles_section,
         question_script_section=script_section,
+        speaking_style_section=style_section,
     )
     messages = [
         {
             "role": "system",
-            "content": "你正在扮演客户，只输出客户说的那一句话，不要解释，不要角色名前缀。",
+            "content": (
+                "你正在扮演真实客户在微信上和客服聊天。"
+                "只输出客户说的那句话，要短、要口语，不要解释，不要角色名前缀，"
+                "不要用您好/请问这类客服腔。"
+            ),
         },
         {"role": "user", "content": p},
     ]
-    return llm.chat(messages, temperature=0.8, max_tokens=200)
+    return llm.chat(messages, temperature=0.85, max_tokens=180)
 
 
 # ---------- 剧本清洗与话题提取 ----------
 
-# 剧本行角色前缀：[客户] / [客服]
-_ROLE_RE = re.compile(r"^\[(客户|客服)\]\s*")
+# 剧本行角色前缀，兼容三种格式：
+#   [客户] xxx        （方括号格式，13 道）
+#   客户：xxx          （无昵称 md 格式，8 道）
+#   客户 (华胤钢结构)：xxx（带昵称 md 格式）
+_ROLE_RE = re.compile(r"^\[?\s*(客户|客服)\s*\]?\s*(?:\([^)]*\))?\s*[:：]?\s*")
 # 噪声：卡片消息 / 图片 / 视频占位
 _SCRIPT_NOISE = (
     "【卡片消息】", "【图片】", "【视频】", "[图片]", "[视频]", "<img",
@@ -247,16 +272,88 @@ def _extract_customer_topics(cleaned: str) -> list[str]:
     return topics[:12]
 
 
-def _build_question_script_section(question_script: str) -> str:
+def _pick_style_samples(cleaned: str) -> list[str]:
+    """从清洗后的剧本中挑出「典型真人短句」作为语气范本。
+
+    只取 4~22 字的客户台词——太短（嗯/好）没有风格信息，太长是客户在讲背景、
+    不是典型口语。剔除图片视频占位与链接。
+    """
+    samples: list[str] = []
+    seen: set[str] = set()
+    for ln in cleaned.splitlines():
+        if not ln.startswith("[客户]"):
+            continue
+        body = ln[len("[客户]"):].strip()
+        if not (4 <= len(body) <= 28):
+            continue
+        if body in _CUSTOMER_STOP or body in seen:
+            continue
+        if _URL_RE.search(body):
+            continue
+        if any(n in body for n in _SCRIPT_NOISE):
+            continue
+        seen.add(body)
+        samples.append(body)
+    return samples[:8]
+
+
+# 真人说话规则：写死的硬约束，与剧本话题无关，任何训练都生效
+_SPEAKING_RULES = """【真人说话规则】（优先级高于上面一切任务描述）
+1. 短。一句话尽量 15 字以内。能一个词答完，就不要写完整句子。
+   客服问「平面的还是凹陷的」→ 只回「凹陷」，不要加「吧」「应该行」「要那种有质感的」。
+2. 直接甩信息，不铺垫、不解释动机、不讲背景故事。
+   对：尺寸200*140 4块 304材质
+   错：我们公司最近有个项目，想做几块标牌，尺寸大概是……
+3. 禁用客服腔：您好、请问、我想咨询一下、能了解一下吗、麻烦您、感谢、方便的话、亲。
+4. 不反问。不要把问题抛回给客服。要问就另起一条消息。
+5. 可以省略主语，用空格代替标点，句尾不打句号。
+6. 口语词自然使用：吧、哈、就行、看下、对不对、没问题吧、大概、差不多。
+7. 一条消息里可以连说两三件事（真人就是这么发的）：
+   看下按多少钱一张算 是不是还是这个开发票
+8. 要连发多条时（真人经常一口气分几条发），用 ||| 分隔，最多 3 条。
+   例：在吗|||我想做几块不锈钢标牌|||尺寸200*140
+   只在自然该连发时才分，不要每轮都分。
+
+【真人会做的事】（在剧本话题范围内自然做，不要生硬堆砌，不要每轮都做）
+- 客服要参数就直接给，不问为什么
+- 聊到一半追加需求：哦对了 还要四角开孔
+- 有工期压力就说出具体时间：今天能出样吗 急用／5点下班前要
+- 拿不准时求一句安心：这个排版没问题的吧
+- 描述不清时发图：[图片] 要这种效果
+- 偶尔提一句别家比价：隔壁给我报XX
+- 需要请示：我问下项目部
+"""
+
+
+def _build_speaking_style_section(cleaned: str) -> str:
+    """构造「真人说话风格」注入段：硬规则 + 从真实剧本提取的语气范本。
+
+    cleaned 为空（无剧本）时只注入硬规则，不影响自由训练流程。
+    """
+    samples = _pick_style_samples(cleaned)
+    if not samples:
+        return _SPEAKING_RULES
+    sample_block = (
+        "【语气范本】（下面是从真实聊天记录里摘的客户原话，"
+        "照这个味道和长度说话，但不要照抄内容）\n"
+        + "\n".join(f"- {s}" for s in samples)
+    )
+    return f"{_SPEAKING_RULES}\n{sample_block}"
+
+
+def _build_question_script_section(question_script: str, cleaned: str = "") -> str:
     """构造客户剧本注入段落（清洗 + 客户关注点清单 + 强约束纪律）。
 
     剧本非空时：清洗脏数据 → 提取客户真实话题 → 指示 AI 客户严格以剧本
     为准扮演，禁止问剧本之外的问题、禁止重复已确认信息。
     为空时返回空串，不影响无剧本的自由训练旧流程。
+
+    cleaned 由调用方传入已清洗文本（与语气范本共用同一次清洗），为空则内部清洗。
     """
     if not question_script or not question_script.strip():
         return ""
-    cleaned = _clean_script_text(question_script)
+    if not cleaned:
+        cleaned = _clean_script_text(question_script)
     if not cleaned:
         return ""
     topics = _extract_customer_topics(cleaned)

@@ -76,6 +76,7 @@ npm run dev
 4. **BATCH_SIZE 被临时调小**（`.env` 里为 5，方便调试），正式用改回 20 或删掉该行。
 5. **脏数据清洗**：题库剧本用 `scripts/clean_question_scripts.py`（默认 dry-run，`--safe-ratio` 阈值防误洗，默认 0.3，个别题降到 0.2）。知识库改运用 `scripts/drop_uv_from_pvc_knowledge.py`。两者都会自动备份。
 6. **敏感文件不入 git**：`.env`、`*.db`、`uploads/`、`backup/`、`node_modules/`、`.venv/` 全部 gitignore。提交前确认 `git ls-files` 不含真实密钥。
+7. **AI 客户真实感 = 表达层真实 + 内容层守剧本**：真实感改造只改「怎么说」，绝不放宽「说什么」。真源在 `simulator.py` 的 `_SPEAKING_RULES`（短句/禁客服腔/直接甩参数/不反问/||| 连发）+ `_pick_style_samples()`（从当次剧本自动提取真实客户原话当语气范本）。**改 prompt 后必须重启后端**（prompt 有进程级缓存）。判据：真人客户平均 8～15 字，出现「您好，我想咨询一下…」即失效。
 
 ## 七、踩过的坑
 
@@ -88,6 +89,9 @@ npm run dev
 - **服务打不开先跑体检**：`scripts/check_health.py`（或双击 `scripts/check_health.bat`），一条命令看出后端/前端/代理/端口占用/数据库谁出问题。本机有 HTTP 代理，脚本已强制绕过（curl 自查记得加 `--noproxy '*'`，否则一律 502 误报）。
 - **别用 `git add -A`**：`backend/data/` 下有 `*.db.before_xxx` 备份副本，会绕过 `.gitignore` 的 `*.db` 规则被误提交。提交前用 `git status --short` 扫一眼，或直接 `git add <具体文件>`。
 - **`.gitignore` 不支持行尾注释**：写 `*.db    # 注释` 会让整条规则失效（pattern 变成含 `#` 的整串），注释必须独占一行。另外排除目录要写 `backend/data/*` 而非 `backend/data/`，否则 `!backend/data/.gitkeep` 例外不生效（目录被整体排除后 git 不会进去）。
+- **剧本有两种格式，清洗正则要同时兼容**：`question.script_text` 里 13 道是 `[客户] xxx` 方括号格式，8 道是 md 的 `客户：xxx` / `客户 (昵称)：xxx` 格式。`simulator.py` 的 `_ROLE_RE` 已改成三种通吃；**改这个正则前先确认两种格式都能匹配**，否则另一批题的剧本会被整批丢弃（清洗后为空 → 剧本纪律与语气范本全部失效，症状是 AI 客户又开始乱问）。
+- **prompt 有进程级缓存**：`app/ai/prompt.py` 的 `_cache` 会缓存 `prompts/*.txt`，**改完 prompt 必须重启后端**才生效，热重载对 prompt 无效。
+- **改 AI 客户真实感后要实测**：别只看代码，跑一遍真实会话看输出。判据是长度——真人客户平均 8～15 字，若看到「您好，我想咨询一下……」这种客服腔就是规则没生效。
 
 ## 八、主人偏好
 

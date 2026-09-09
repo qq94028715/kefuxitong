@@ -33,7 +33,14 @@ from .ai.knowledge import (
     PROMPT_VERSION,
 )
 from .ai.router import generate_reply_stream
-from .ai.simulator import END_MARKER, generate_customer_reply, SUMMARY_THRESHOLD, summarize_older
+from .ai.simulator import (
+    BUBBLE_SEP,
+    END_MARKER,
+    generate_customer_reply,
+    split_customer_bubbles,
+    SUMMARY_THRESHOLD,
+    summarize_older,
+)
 from .auth import (
     create_access_token,
     get_current_user,
@@ -1865,7 +1872,7 @@ def start_batch_question(
             question_script=question.script_text if question else "",
         )
         reply = _clean_reply(reply)
-        db.add(ChatMessage(session_id=session.id, role="customer", content=reply))
+        _add_customer_messages(db, session.id, reply)
         db.commit()
         db.refresh(session)
 
@@ -1905,7 +1912,7 @@ def start_session(
         turn_count=0, max_turns=settings.max_dialogue_turns,
     )
     reply = _clean_reply(reply)
-    db.add(ChatMessage(session_id=session.id, role="customer", content=reply))
+    _add_customer_messages(db, session.id, reply)
     db.commit()
     db.refresh(session)
     return _session_out(session, cat.name)
@@ -1979,17 +1986,14 @@ def send_message(
     clean = _clean_reply(raw)
     if clean != raw and END_MARKER in raw:
         # 含结束标记
-        if clean:
-            customer_msg = ChatMessage(session_id=s.id, role="customer", content=clean)
-            db.add(customer_msg)
-            db.flush()
+        msgs = _add_customer_messages(db, s.id, clean)
+        customer_msg = msgs[-1] if msgs else None
         is_finished = True
     elif raw.strip() == END_MARKER:
         is_finished = True
     else:
-        customer_msg = ChatMessage(session_id=s.id, role="customer", content=clean)
-        db.add(customer_msg)
-        db.flush()
+        msgs = _add_customer_messages(db, s.id, clean)
+        customer_msg = msgs[-1] if msgs else None
 
     # 超过最大轮数
     if turn_count >= settings.max_dialogue_turns:
@@ -2099,19 +2103,30 @@ def stream_message(
                 is_finished = True
 
             if clean:
-                cm = ChatMessage(session_id=session_id, role="customer", content=clean)
-                db2.add(cm)
+                parts = split_customer_bubbles(clean)
+                msg_id = None
+                for part in parts:
+                    cm = ChatMessage(session_id=session_id, role="customer", content=part)
+                    db2.add(cm)
                 db2.commit()
-                db2.refresh(cm)
-                msg_id = cm.id
+                if parts:
+                    db2.refresh(cm)
+                    msg_id = cm.id
+                    msg_ids = [m.id for m in db2.query(ChatMessage).filter(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.role == "customer",
+                    ).order_by(ChatMessage.id.desc()).limit(len(parts))][::-1]
+                else:
+                    msg_ids = []
             else:
                 msg_id = None
+                msg_ids = []
 
             # 超过最大轮数自动结束
             if turn_count >= settings.max_dialogue_turns:
                 is_finished = True
 
-            yield f"data: {json.dumps({'done': True, 'message_id': msg_id, 'turn': turn_count, 'is_finished': is_finished}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'message_id': msg_id, 'message_ids': msg_ids, 'turn': turn_count, 'is_finished': is_finished, 'sep': BUBBLE_SEP}, ensure_ascii=False)}\n\n"
         finally:
             db2.close()
 
@@ -2417,8 +2432,22 @@ def _clean_reply(raw: str) -> str:
     """去掉 END_MARKER 及其后的内容，去掉多余空白。"""
     if not raw:
         return ""
-    text = raw.replace(END_MARKER, "").strip()
-    return text
+    return raw.replace(END_MARKER, "").strip()
+
+
+def _add_customer_messages(db, session_id: int, content: str) -> list:
+    """把 AI 客户回复按气泡分隔符拆成多条入库，模拟真人分条连发。
+
+    返回创建的 ChatMessage 列表（可能为空）。未使用分隔符时等价于单条入库。
+    """
+    msgs = []
+    for part in split_customer_bubbles(content):
+        m = ChatMessage(session_id=session_id, role="customer", content=part)
+        db.add(m)
+        msgs.append(m)
+    if msgs:
+        db.flush()
+    return msgs
 
 
 def _compute_summary(session, category_name: str) -> str:

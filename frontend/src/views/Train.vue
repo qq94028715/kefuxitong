@@ -583,9 +583,27 @@ async function onSend() {
   resetTyping({ skipActiveHint: true })
   _stopLiveTick()
 
-  const customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
+  let customerMsg = { id: 'cust-' + Date.now(), role: 'customer', content: '' }
   messages.value.push(customerMsg)
   await scrollBottom()
+
+  // 真人会一口气分几条发：模型用 ||| 分隔，这里按分隔符拆成多个气泡
+  let rawBuf = ''
+  let bubbleIdx = 0
+  const flushBubbles = () => {
+    const parts = rawBuf.split('|||')
+    if (parts.length < 2) return false
+    customerMsg.content = parts[0].trim()
+    for (let i = 1; i < parts.length - 1; i++) {
+      const done = parts[i].trim()
+      if (!done) continue
+      messages.value.push({ id: `cust-${Date.now()}-${++bubbleIdx}`, role: 'customer', content: done })
+    }
+    rawBuf = parts[parts.length - 1]
+    customerMsg = { id: `cust-${Date.now()}-${++bubbleIdx}`, role: 'customer', content: rawBuf }
+    messages.value.push(customerMsg)
+    return true
+  }
 
   let streamResult = null
   try {
@@ -593,11 +611,15 @@ async function onSend() {
       session.value.id,
       text,
       (token) => {
-        customerMsg.content += token
+        rawBuf += token
+        if (rawBuf.includes('|||')) flushBubbles()
+        else customerMsg.content = rawBuf
         scrollBottom()
       },
       (data) => {
         streamResult = data
+        // 收尾：去掉可能残留的分隔符，只留最后一条气泡内容
+        customerMsg.content = rawBuf.split('|||').pop().trim()
       },
       metrics
     )
