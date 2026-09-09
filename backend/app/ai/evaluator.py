@@ -67,6 +67,28 @@ def evaluate_session(
     return _evaluate_with_rules(messages, knowledge, category_name, dimensions)
 
 
+def _build_hard_rules_text(knowledge: dict) -> str:
+    """把知识库的 hard_rules 渲染成注入 score.txt 的红线文本。
+
+    无 hard_rules 字段时返回占位说明，不影响未配置红线的品类。
+    """
+    rules = knowledge.get("hard_rules") or []
+    if not rules:
+        return "（本品类暂未配置硬性扣分项，按评分维度正常评定即可）"
+    lines = []
+    for i, r in enumerate(rules, 1):
+        if isinstance(r, dict):
+            name = r.get("rule", "")
+            detail = r.get("detail", "")
+            deduct = r.get("deduct", 10)
+            lines.append(f"{i}. 【扣 {deduct} 分】{name}")
+            if detail:
+                lines.append(f"   判定说明：{detail}")
+        elif isinstance(r, str):
+            lines.append(f"{i}. 【扣 10 分】{r}")
+    return "\n".join(lines)
+
+
 def _evaluate_with_llm(
     messages: list,
     knowledge: dict,
@@ -86,6 +108,7 @@ def _evaluate_with_llm(
     for name, max_score in dimensions.items():
         dim_output_items.append(f'    "{name}": 0到{max_score}的整数')
     dim_output_text = ",\n".join(dim_output_items)
+    hard_rules_text = _build_hard_rules_text(knowledge)
     p = prompt.load_prompt(
         "score",
         knowledge_json=knowledge_json,
@@ -94,6 +117,7 @@ def _evaluate_with_llm(
         sales_process=json.dumps(sales_process, ensure_ascii=False),
         scoring_dimensions_text=scoring_dimensions_text,
         scoring_dimensions_output=dim_output_text,
+        hard_rules_text=hard_rules_text,
     )
     llm_messages = [
         {

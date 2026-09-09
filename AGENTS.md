@@ -76,7 +76,8 @@ npm run dev
 4. **BATCH_SIZE 被临时调小**（`.env` 里为 5，方便调试），正式用改回 20 或删掉该行。
 5. **脏数据清洗**：题库剧本用 `scripts/clean_question_scripts.py`（默认 dry-run，`--safe-ratio` 阈值防误洗，默认 0.3，个别题降到 0.2）。知识库改运用 `scripts/drop_uv_from_pvc_knowledge.py`。两者都会自动备份。
 6. **敏感文件不入 git**：`.env`、`*.db`、`uploads/`、`backup/`、`node_modules/`、`.venv/` 全部 gitignore。提交前确认 `git ls-files` 不含真实密钥。
-7. **AI 客户真实感 = 表达层真实 + 内容层守剧本**：真实感改造只改「怎么说」，绝不放宽「说什么」。真源在 `simulator.py` 的 `_SPEAKING_RULES`（短句/禁客服腔/直接甩参数/不反问/||| 连发）+ `_pick_style_samples()`（从当次剧本自动提取真实客户原话当语气范本）。**改 prompt 后必须重启后端**（prompt 有进程级缓存）。判据：真人客户平均 8～15 字，出现「您好，我想咨询一下…」即失效。
+7. **评分红线机制**：知识库可含 `hard_rules` 字段（`[{rule, detail, deduct}]`），由 `evaluator.py:_build_hard_rules_text()` 渲染注入 `score.txt` 的【硬性扣分项】段落，违反即在总分直接扣减并在 mistakes 里写明「违反红线：…」。**无该字段的品类返回占位说明，不受影响**。新增红线用 `scripts/add_pvc_hard_rules.py`（默认 dry-run，`--apply` 写入并自动备份 db，会新建知识库版本）。实测区分度：违规对话 30 分 vs 合规对话 78 分。
+8. **AI 客户真实感 = 表达层真实 + 内容层守剧本**：真实感改造只改「怎么说」，绝不放宽「说什么」。真源在 `simulator.py` 的 `_SPEAKING_RULES`（短句/禁客服腔/直接甩参数/不反问/||| 连发）+ `_pick_style_samples()`（从当次剧本自动提取真实客户原话当语气范本）。**改 prompt 后必须重启后端**（prompt 有进程级缓存）。判据：真人客户平均 8～15 字，出现「您好，我想咨询一下…」即失效。
 
 ## 七、踩过的坑
 
